@@ -75,6 +75,50 @@ test("assemble resolves equ-style constants and parenthesized expressions", () =
   assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8800);
 });
 
+test("assemble resolves cheap labels within the nearest non-cheap label scope", () => {
+  const source = [
+    ".org $8C00",
+    "start lda #1",
+    "@loop inx",
+    "      bne @loop",
+    "next lda #2",
+    "@loop dex",
+    "      bne @loop",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0xa9, 0x01, 0xe8, 0xd0, 0xfd, 0xa9, 0x02, 0xca, 0xd0, 0xfd]);
+
+  const symbolMap = new Map(result.symbols.map((entry) => [entry.name, entry.value]));
+  assert.equal(symbolMap.get("START"), 0x8c00);
+  assert.equal(symbolMap.get("NEXT"), 0x8c05);
+  assert.equal(symbolMap.get("START.@LOOP"), 0x8c02);
+  assert.equal(symbolMap.get("NEXT.@LOOP"), 0x8c07);
+});
+
+test("assemble supports reassignable labels with .set and =", () => {
+  const source = [
+    ".org $8D00",
+    "count .set 1",
+    "start lda #count",
+    "count = count + 1",
+    "      ldx #count",
+    "count .set count + 1",
+    "      ldy #count",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0xa9, 0x01, 0xa2, 0x02, 0xa0, 0x03]);
+
+  const symbolMap = new Map(result.symbols.map((entry) => [entry.name, entry.value]));
+  assert.equal(symbolMap.get("COUNT"), 3);
+  assert.equal(symbolMap.get("START"), 0x8d00);
+});
+
 test("assemble reports diagnostics for unresolved symbols and unknown mnemonics", () => {
   const source = [
     ".org $8100",

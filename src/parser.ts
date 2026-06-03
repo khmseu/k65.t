@@ -76,7 +76,7 @@ function collectOperands(tokens: string[]): string[] {
 }
 
 function isLikelyLabel(token: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(token);
+  return /^(?:@)?[A-Za-z_][A-Za-z0-9_]*$/.test(token);
 }
 
 function isOpcodeLike(token: string): boolean {

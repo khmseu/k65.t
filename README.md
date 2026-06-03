@@ -103,6 +103,17 @@ screen .equ $0400
 lda #screen & $FF
 ```
 
+### `label .set expression` or `label = expression`
+
+Defines a reassignable symbol without emitting bytes. Later `.set` or `=` assignments to the same label update the value seen by following source lines.
+
+Example:
+
+```asm
+count .set 1
+count = count + 1
+```
+
 ### `.byte expr[, expr ...]`
 
 Emits one byte per operand. Each expression is truncated to `$00`-`$FF` during output.
@@ -210,6 +221,8 @@ Example:
 
 - A line may contain an optional label, an opcode or directive, comma-separated operands, and an optional semicolon comment.
 - Labels may be written with or without a trailing colon.
+- Cheap labels begin with `@` and are scoped to the nearest preceding non-cheap label, so the same cheap label may be reused under different parent labels.
+- Reassignable labels use `.set` or `=` and are resolved sequentially, so each reassignment only affects later lines.
 - Pure comment lines may start with `;` or `*`.
 - Blank lines are accepted.
 - Expressions currently support numeric literals, symbols, `*` for current location, parentheses, unary `+`, unary `-`, `~`, arithmetic `+ - * / %`, and bitwise `& ^ |`.

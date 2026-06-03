@@ -5,6 +5,8 @@ import { PreprocessError, preprocessSource } from "./preprocessor.js";
 import type { AssemblyDiagnostic, AssemblyResult, ListingLine, SourceLine, SymbolEntry } from "./types.js";
 
 const MAX_PASSES = 10;
+const CHEAP_LABEL_PREFIX = "__CHEAP_LABEL__";
+const CHEAP_LABEL_ROOT = "ROOT";
 
 interface ModeResolution {
   readonly mode: AddressingMode;
@@ -18,6 +20,8 @@ interface SizedLine {
 
 interface PassState {
   readonly symbols: Map<string, number>;
+  readonly lineSymbols: ReadonlyArray<ReadonlyMap<string, number>>;
+  readonly lineScopes: ReadonlyArray<string | undefined>;
   readonly lineSizes: number[];
   readonly startAddress: number;
   readonly endAddress: number;
@@ -52,8 +56,8 @@ export function assemble(sourceText: string, options: AssembleOptions = {}): Ass
   const diagnostics = collectDiagnostics(parsed, sized);
   const emitted = diagnostics.length === 0 ? emitBinary(parsed, sized) : { binary: new Uint8Array(), listing: buildListingOnly(parsed) };
   const symbols: SymbolEntry[] = Array.from(sized.symbols.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, value]) => ({ name, value }));
+    .map(([name, value]) => ({ name: displaySymbolName(name), value }))
+    .sort((left, right) => left.name.localeCompare(right.name));
 
   return {
     binary: emitted.binary,
@@ -85,40 +89,55 @@ function mapPreprocessError(error: unknown): AssemblyDiagnostic {
 function runSizingPasses(lines: readonly SourceLine[]): PassState {
   let symbols = new Map<string, number>();
   let previousSizes = new Array<number>(lines.length).fill(0);
+  let previousLineSymbols = lines.map(() => new Map<string, number>() as ReadonlyMap<string, number>);
+  let previousLineScopes = new Array<string | undefined>(lines.length).fill(undefined);
   let startAddress = 0;
   let endAddress = 0;
 
   for (let pass = 0; pass < MAX_PASSES; pass += 1) {
-    const nextSymbols = new Map<string, number>();
+    const nextSymbols = new Map<string, number>(symbols);
+    const lineSymbols: ReadonlyMap<string, number>[] = [];
+    const lineScopes: Array<string | undefined> = [];
     const lineSizes: number[] = [];
     let location = 0;
     let hasOrigin = false;
     let minAddress = Number.POSITIVE_INFINITY;
     let maxAddress = Number.NEGATIVE_INFINITY;
+    let currentScope: string | undefined;
 
     for (const line of lines) {
       if (line.kind !== "code") {
+        lineSymbols.push(new Map(nextSymbols));
+        lineScopes.push(currentScope);
         lineSizes.push(0);
         continue;
       }
 
-      if (line.label !== undefined && line.mnemonic?.toUpperCase() !== ".EQU") {
-        const key = line.label.toUpperCase();
-        nextSymbols.set(key, location & 0xffff);
+      const mnemonic = normalizeMnemonic(line.mnemonic);
+      if (line.label !== undefined && !isCheapLabel(line.label)) {
+        currentScope = normalizeGlobalLabel(line.label);
       }
 
-      if (line.label !== undefined && line.mnemonic?.toUpperCase() === ".EQU") {
+      if (line.label !== undefined && !isAssignmentDirective(mnemonic)) {
+        nextSymbols.set(normalizeLabelName(line.label, currentScope), location & 0xffff);
+      }
+
+      const lineSymbolState = new Map(nextSymbols);
+      lineSymbols.push(lineSymbolState);
+      lineScopes.push(currentScope);
+
+      if (line.label !== undefined && isAssignmentDirective(mnemonic)) {
         const expr = line.operands[0];
-        const resolved = expr === undefined ? null : evaluateExpression(expr, symbols, location);
+        const resolved = expr === undefined ? null : evaluateScopedExpression(expr, lineSymbolState, location, currentScope);
         if (resolved !== null) {
-          nextSymbols.set(line.label.toUpperCase(), resolved);
+          nextSymbols.set(normalizeLabelName(line.label, currentScope), resolved);
         }
       }
 
-      const sizedLine = sizeLine(line, location, symbols);
+      const sizedLine = sizeLine(line, location, lineSymbolState, currentScope);
       lineSizes.push(sizedLine.size);
 
-      if (line.mnemonic?.toUpperCase() === ".ORG") {
+      if (mnemonic === ".ORG") {
         hasOrigin = true;
         minAddress = Math.min(minAddress, sizedLine.nextAddress);
         location = sizedLine.nextAddress;
@@ -142,27 +161,38 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
     const sizesStable = arraysEqual(previousSizes, lineSizes);
     symbols = nextSymbols;
     previousSizes = lineSizes;
+    previousLineSymbols = lineSymbols;
+    previousLineScopes = lineScopes;
     startAddress = minAddress & 0xffff;
     endAddress = Math.max(maxAddress, startAddress) & 0xffff;
 
     if (symbolsStable && sizesStable) {
-      return { symbols, lineSizes, startAddress, endAddress };
+      return { symbols, lineSymbols, lineScopes, lineSizes, startAddress, endAddress };
     }
   }
 
-  return { symbols, lineSizes: previousSizes, startAddress, endAddress };
+  return {
+    symbols,
+    lineSymbols: previousLineSymbols,
+    lineScopes: previousLineScopes,
+    lineSizes: previousSizes,
+    startAddress,
+    endAddress,
+  };
 }
 
 function collectDiagnostics(lines: readonly SourceLine[], passState: PassState): AssemblyDiagnostic[] {
   const diagnostics: AssemblyDiagnostic[] = [];
   let location = passState.startAddress;
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     if (line.kind !== "code") {
       continue;
     }
 
-    const mnemonic = line.mnemonic?.toUpperCase();
+    const mnemonic = normalizeMnemonic(line.mnemonic);
+    const symbols = passState.lineSymbols[index] ?? passState.symbols;
+    const scope = passState.lineScopes[index];
     if (mnemonic === undefined) {
       continue;
     }
@@ -172,7 +202,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
       if (expression === undefined) {
         diagnostics.push(makeDiagnostic(line, "E_DIR_ORG_OPERAND", ".org requires an expression operand"));
       } else {
-        const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
+        const evaluation = evaluateScopedExpressionDetailed(expression, symbols, location, scope);
         if (evaluation.value === null) {
           diagnostics.push(
             makeDiagnostic(
@@ -187,21 +217,23 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
       continue;
     }
 
-    if (mnemonic === ".EQU") {
+    if (isAssignmentDirective(mnemonic)) {
       if (line.label === undefined) {
-        diagnostics.push(makeDiagnostic(line, "E_DIR_EQU_LABEL", ".equ requires a label"));
+        diagnostics.push(makeDiagnostic(line, assignmentLabelCode(mnemonic), `${assignmentDirectiveName(mnemonic)} requires a label`));
       }
       const expression = line.operands[0];
       if (expression === undefined) {
-        diagnostics.push(makeDiagnostic(line, "E_DIR_EQU_OPERAND", ".equ requires an expression operand"));
+        diagnostics.push(
+          makeDiagnostic(line, assignmentOperandCode(mnemonic), `${assignmentDirectiveName(mnemonic)} requires an expression operand`),
+        );
       } else {
-        const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
+        const evaluation = evaluateScopedExpressionDetailed(expression, symbols, location, scope);
         if (evaluation.value === null) {
           diagnostics.push(
             makeDiagnostic(
               line,
               evaluation.errorCode ?? "E_EXPR_INVALID",
-              `.equ expression error (${expression}): ${evaluation.error ?? "invalid expression"}`,
+              `${assignmentDirectiveName(mnemonic)} expression error (${expression}): ${evaluation.error ?? "invalid expression"}`,
               evaluation.errorColumn ?? undefined,
             ),
           );
@@ -212,7 +244,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
 
     if (mnemonic === ".BYTE") {
       line.operands.forEach((expression) => {
-        const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
+        const evaluation = evaluateScopedExpressionDetailed(expression, symbols, location, scope);
         if (evaluation.value === null) {
           diagnostics.push(
             makeDiagnostic(
@@ -240,7 +272,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
           continue;
         }
 
-        const evaluation = evaluateExpressionDetailed(operand, passState.symbols, location);
+        const evaluation = evaluateScopedExpressionDetailed(operand, symbols, location, scope);
         if (evaluation.value === null) {
           diagnostics.push(
             makeDiagnostic(
@@ -258,7 +290,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
 
     if (mnemonic === ".WORD") {
       line.operands.forEach((expression) => {
-        const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
+        const evaluation = evaluateScopedExpressionDetailed(expression, symbols, location, scope);
         if (evaluation.value === null) {
           diagnostics.push(
             makeDiagnostic(
@@ -281,7 +313,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
         continue;
       }
 
-      const countEval = evaluateExpressionDetailed(countExpr, passState.symbols, location);
+      const countEval = evaluateScopedExpressionDetailed(countExpr, symbols, location, scope);
       if (countEval.value === null) {
         diagnostics.push(
           makeDiagnostic(
@@ -297,7 +329,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
 
       const valueExpr = line.operands[1];
       if (valueExpr !== undefined) {
-        const valueEval = evaluateExpressionDetailed(valueExpr, passState.symbols, location);
+        const valueEval = evaluateScopedExpressionDetailed(valueExpr, symbols, location, scope);
         if (valueEval.value === null) {
           diagnostics.push(
             makeDiagnostic(
@@ -321,7 +353,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
         continue;
       }
 
-      const boundaryEval = evaluateExpressionDetailed(boundaryExpr, passState.symbols, location);
+      const boundaryEval = evaluateScopedExpressionDetailed(boundaryExpr, symbols, location, scope);
       if (boundaryEval.value === null) {
         diagnostics.push(
           makeDiagnostic(
@@ -342,7 +374,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
 
       const fillExpr = line.operands[1];
       if (fillExpr !== undefined) {
-        const fillEval = evaluateExpressionDetailed(fillExpr, passState.symbols, location);
+        const fillEval = evaluateScopedExpressionDetailed(fillExpr, symbols, location, scope);
         if (fillEval.value === null) {
           diagnostics.push(
             makeDiagnostic(
@@ -365,7 +397,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
       continue;
     }
 
-    const resolved = resolveMode(mnemonic, line.operands, opcodeTable, passState.symbols, location, false);
+    const resolved = resolveMode(mnemonic, line.operands, opcodeTable, symbols, location, false, scope);
     if (opcodeTable[resolved.mode] === undefined) {
       diagnostics.push(
         makeDiagnostic(line, "E_MODE_UNSUPPORTED", `Unsupported addressing mode for ${mnemonic}: ${resolved.mode}`),
@@ -375,7 +407,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
 
     if (modeNeedsValue(resolved.mode) && resolved.value === null) {
       const operandText = line.operands.join(", ");
-      const detail = resolveOperandDiagnostic(mnemonic, line.operands, passState.symbols, location);
+      const detail = resolveOperandDiagnostic(mnemonic, line.operands, symbols, location, scope);
       diagnostics.push(
         makeDiagnostic(
           line,
@@ -406,6 +438,7 @@ function resolveOperandDiagnostic(
   operands: readonly string[],
   symbols: ReadonlyMap<string, number>,
   location: number,
+  scope: string | undefined,
 ): { code: string; message: string; column?: number } {
   const operand = operands.join(", ").trim();
   if (operand.length === 0) {
@@ -441,7 +474,7 @@ function resolveOperandDiagnostic(
     }
   }
 
-  const evaluation = evaluateExpressionDetailed(expression, symbols, location);
+  const evaluation = evaluateScopedExpressionDetailed(expression, symbols, location, scope);
   return {
     code: evaluation.errorCode ?? "E_EXPR_INVALID",
     message: evaluation.error ?? "invalid expression",
@@ -457,19 +490,24 @@ function buildListingOnly(lines: readonly SourceLine[]): ListingLine[] {
   }));
 }
 
-function sizeLine(line: SourceLine, location: number, symbols: ReadonlyMap<string, number>): SizedLine {
-  const mnemonic = line.mnemonic?.toUpperCase();
+function sizeLine(
+  line: SourceLine,
+  location: number,
+  symbols: ReadonlyMap<string, number>,
+  scope: string | undefined,
+): SizedLine {
+  const mnemonic = normalizeMnemonic(line.mnemonic);
   if (mnemonic === undefined) {
     return { size: 0, nextAddress: location };
   }
 
   if (mnemonic === ".ORG") {
     const expr = line.operands[0];
-    const resolved = expr === undefined ? location : evaluateExpression(expr, symbols, location);
+    const resolved = expr === undefined ? location : evaluateScopedExpression(expr, symbols, location, scope);
     return { size: 0, nextAddress: (resolved ?? location) & 0xffff };
   }
 
-  if (mnemonic === ".EQU") {
+  if (isAssignmentDirective(mnemonic)) {
     return { size: 0, nextAddress: location };
   }
 
@@ -489,14 +527,14 @@ function sizeLine(line: SourceLine, location: number, symbols: ReadonlyMap<strin
 
   if (mnemonic === ".FILL") {
     const countExpr = line.operands[0];
-    const count = countExpr === undefined ? 0 : evaluateExpression(countExpr, symbols, location);
+    const count = countExpr === undefined ? 0 : evaluateScopedExpression(countExpr, symbols, location, scope);
     const size = (count ?? 0) & 0xffff;
     return { size, nextAddress: location + size };
   }
 
   if (mnemonic === ".ALIGN") {
     const boundaryExpr = line.operands[0];
-    const boundary = boundaryExpr === undefined ? null : evaluateExpression(boundaryExpr, symbols, location);
+    const boundary = boundaryExpr === undefined ? null : evaluateScopedExpression(boundaryExpr, symbols, location, scope);
     const padding = boundary === null || boundary <= 0 ? 0 : alignPadding(location, boundary);
     return { size: padding, nextAddress: location + padding };
   }
@@ -506,7 +544,7 @@ function sizeLine(line: SourceLine, location: number, symbols: ReadonlyMap<strin
     return { size: 0, nextAddress: location };
   }
 
-  const resolved = resolveMode(mnemonic, line.operands, table, symbols, location, true);
+  const resolved = resolveMode(mnemonic, line.operands, table, symbols, location, true, scope);
   const size = modeSize(resolved.mode);
   return { size, nextAddress: location + size };
 }
@@ -518,32 +556,34 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
   let minAddress = Number.POSITIVE_INFINITY;
   let maxAddress = Number.NEGATIVE_INFINITY;
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     if (line.kind !== "code") {
       listing.push({ address: null, bytes: [], source: line.raw });
       continue;
     }
 
-    const mnemonic = line.mnemonic?.toUpperCase();
+    const mnemonic = normalizeMnemonic(line.mnemonic);
+    const symbols = passState.lineSymbols[index] ?? passState.symbols;
+    const scope = passState.lineScopes[index];
     if (mnemonic === undefined) {
       listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
       continue;
     }
 
     if (mnemonic === ".ORG") {
-      const target = evaluateExpression(line.operands[0] ?? "0", passState.symbols, location) ?? location;
+      const target = evaluateScopedExpression(line.operands[0] ?? "0", symbols, location, scope) ?? location;
       location = target & 0xffff;
       listing.push({ address: location, bytes: [], source: line.raw });
       continue;
     }
 
-    if (mnemonic === ".EQU") {
+    if (isAssignmentDirective(mnemonic)) {
       listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
       continue;
     }
 
     if (mnemonic === ".BYTE") {
-      const emitted = line.operands.map((expr) => (evaluateExpression(expr, passState.symbols, location) ?? 0) & 0xff);
+      const emitted = line.operands.map((expr) => (evaluateScopedExpression(expr, symbols, location, scope) ?? 0) & 0xff);
       writeBytes(bytes, location, emitted);
       listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
       if (emitted.length > 0) {
@@ -563,7 +603,7 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
           continue;
         }
 
-        emitted.push((evaluateExpression(operand, passState.symbols, location) ?? 0) & 0xff);
+        emitted.push((evaluateScopedExpression(operand, symbols, location, scope) ?? 0) & 0xff);
       }
       writeBytes(bytes, location, emitted);
       listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
@@ -578,7 +618,7 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
     if (mnemonic === ".WORD") {
       const emitted: number[] = [];
       for (const expr of line.operands) {
-        const value = (evaluateExpression(expr, passState.symbols, location) ?? 0) & 0xffff;
+        const value = (evaluateScopedExpression(expr, symbols, location, scope) ?? 0) & 0xffff;
         emitted.push(value & 0xff, (value >> 8) & 0xff);
       }
       writeBytes(bytes, location, emitted);
@@ -592,8 +632,8 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
     }
 
     if (mnemonic === ".FILL") {
-      const count = (evaluateExpression(line.operands[0] ?? "0", passState.symbols, location) ?? 0) & 0xffff;
-      const value = (evaluateExpression(line.operands[1] ?? "0", passState.symbols, location) ?? 0) & 0xff;
+      const count = (evaluateScopedExpression(line.operands[0] ?? "0", symbols, location, scope) ?? 0) & 0xffff;
+      const value = (evaluateScopedExpression(line.operands[1] ?? "0", symbols, location, scope) ?? 0) & 0xff;
       const emitted = new Array<number>(count).fill(value);
       writeBytes(bytes, location, emitted);
       listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
@@ -606,8 +646,8 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
     }
 
     if (mnemonic === ".ALIGN") {
-      const boundary = evaluateExpression(line.operands[0] ?? "0", passState.symbols, location) ?? 0;
-      const fillValue = (evaluateExpression(line.operands[1] ?? "0", passState.symbols, location) ?? 0) & 0xff;
+      const boundary = evaluateScopedExpression(line.operands[0] ?? "0", symbols, location, scope) ?? 0;
+      const fillValue = (evaluateScopedExpression(line.operands[1] ?? "0", symbols, location, scope) ?? 0) & 0xff;
       const emitted = new Array<number>(alignPadding(location, boundary)).fill(fillValue);
       writeBytes(bytes, location, emitted);
       listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
@@ -625,7 +665,7 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
       continue;
     }
 
-    const resolved = resolveMode(mnemonic, line.operands, opcodeTable, passState.symbols, location, false);
+    const resolved = resolveMode(mnemonic, line.operands, opcodeTable, symbols, location, false, scope);
     const opcode = opcodeTable[resolved.mode];
     if (opcode === undefined) {
       listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
@@ -659,11 +699,12 @@ function resolveMode(
   symbols: ReadonlyMap<string, number>,
   location: number,
   conservative: boolean,
+  scope: string | undefined,
 ): ModeResolution {
   const operand = operands.join(", ").trim();
 
   if (branchMnemonics.has(mnemonic)) {
-    const value = operand.length > 0 ? evaluateExpression(operand, symbols, location) : null;
+    const value = operand.length > 0 ? evaluateScopedExpression(operand, symbols, location, scope) : null;
     return { mode: "relative", value };
   }
 
@@ -678,7 +719,7 @@ function resolveMode(
   const immediate = operand.match(/^#\s*(.+)$/i);
   if (immediate) {
     const expr = immediate[1];
-    return { mode: "immediate", value: expr === undefined ? null : evaluateExpression(expr, symbols, location) };
+    return { mode: "immediate", value: expr === undefined ? null : evaluateScopedExpression(expr, symbols, location, scope) };
   }
 
   const indexedIndirect = operand.match(/^\(\s*(.+)\s*,\s*X\s*\)$/i);
@@ -686,7 +727,7 @@ function resolveMode(
     const expr = indexedIndirect[1];
     return {
       mode: "indexedIndirect",
-      value: expr === undefined ? null : evaluateExpression(expr, symbols, location),
+      value: expr === undefined ? null : evaluateScopedExpression(expr, symbols, location, scope),
     };
   }
 
@@ -695,20 +736,20 @@ function resolveMode(
     const expr = indirectIndexed[1];
     return {
       mode: "indirectIndexed",
-      value: expr === undefined ? null : evaluateExpression(expr, symbols, location),
+      value: expr === undefined ? null : evaluateScopedExpression(expr, symbols, location, scope),
     };
   }
 
   const indirect = operand.match(/^\(\s*(.+)\s*\)$/i);
   if (indirect) {
     const expr = indirect[1];
-    return { mode: "indirect", value: expr === undefined ? null : evaluateExpression(expr, symbols, location) };
+    return { mode: "indirect", value: expr === undefined ? null : evaluateScopedExpression(expr, symbols, location, scope) };
   }
 
   const xIndexed = operand.match(/^(.+)\s*,\s*X\s*$/i);
   if (xIndexed) {
     const expr = xIndexed[1];
-    const value = expr === undefined ? null : evaluateExpression(expr, symbols, location);
+    const value = expr === undefined ? null : evaluateScopedExpression(expr, symbols, location, scope);
     if (table.zeropageX !== undefined && (value !== null ? value <= 0xff : !conservative)) {
       return { mode: "zeropageX", value };
     }
@@ -718,18 +759,85 @@ function resolveMode(
   const yIndexed = operand.match(/^(.+)\s*,\s*Y\s*$/i);
   if (yIndexed) {
     const expr = yIndexed[1];
-    const value = expr === undefined ? null : evaluateExpression(expr, symbols, location);
+    const value = expr === undefined ? null : evaluateScopedExpression(expr, symbols, location, scope);
     if (table.zeropageY !== undefined && (value !== null ? value <= 0xff : !conservative)) {
       return { mode: "zeropageY", value };
     }
     return { mode: "absoluteY", value };
   }
 
-  const value = evaluateExpression(operand, symbols, location);
+  const value = evaluateScopedExpression(operand, symbols, location, scope);
   if (table.zeropage !== undefined && (value !== null ? value <= 0xff : !conservative)) {
     return { mode: "zeropage", value };
   }
   return { mode: "absolute", value };
+}
+
+function normalizeMnemonic(mnemonic: string | undefined): string | undefined {
+  return mnemonic?.toUpperCase();
+}
+
+function isAssignmentDirective(mnemonic: string | undefined): boolean {
+  return mnemonic === ".EQU" || mnemonic === ".SET" || mnemonic === "=";
+}
+
+function assignmentDirectiveName(mnemonic: string): string {
+  return mnemonic === "=" ? "=" : mnemonic.toLowerCase();
+}
+
+function assignmentLabelCode(mnemonic: string): string {
+  return mnemonic === ".EQU" ? "E_DIR_EQU_LABEL" : "E_DIR_SET_LABEL";
+}
+
+function assignmentOperandCode(mnemonic: string): string {
+  return mnemonic === ".EQU" ? "E_DIR_EQU_OPERAND" : "E_DIR_SET_OPERAND";
+}
+
+function isCheapLabel(label: string): boolean {
+  return label.startsWith("@");
+}
+
+function normalizeGlobalLabel(label: string): string {
+  return label.toUpperCase();
+}
+
+function normalizeLabelName(label: string, scope: string | undefined): string {
+  if (!isCheapLabel(label)) {
+    return normalizeGlobalLabel(label);
+  }
+
+  return `${CHEAP_LABEL_PREFIX}${scope ?? CHEAP_LABEL_ROOT}__${label.slice(1).toUpperCase()}`;
+}
+
+function rewriteCheapLabels(expression: string, scope: string | undefined): string {
+  return expression.replace(/@([A-Za-z_][A-Za-z0-9_]*)/g, (_, localName: string) => normalizeLabelName(`@${localName}`, scope));
+}
+
+function evaluateScopedExpression(
+  expression: string,
+  symbols: ReadonlyMap<string, number>,
+  location: number,
+  scope: string | undefined,
+): number | null {
+  return evaluateExpression(rewriteCheapLabels(expression, scope), symbols, location);
+}
+
+function evaluateScopedExpressionDetailed(
+  expression: string,
+  symbols: ReadonlyMap<string, number>,
+  location: number,
+  scope: string | undefined,
+) {
+  return evaluateExpressionDetailed(rewriteCheapLabels(expression, scope), symbols, location);
+}
+
+function displaySymbolName(name: string): string {
+  const match = name.match(/^__CHEAP_LABEL__(.+)__([A-Z_][A-Z0-9_]*)$/);
+  if (match?.[1] === undefined || match[2] === undefined) {
+    return name;
+  }
+
+  return match[1] === CHEAP_LABEL_ROOT ? `@${match[2]}` : `${match[1]}.@${match[2]}`;
 }
 
 function encodeInstruction(opcode: number, modeResolution: ModeResolution, location: number): number[] {
