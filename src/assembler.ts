@@ -1,5 +1,5 @@
 import { parseSource } from "./parser.js";
-import { evaluateExpression } from "./expressions.js";
+import { evaluateExpression, evaluateExpressionDetailed } from "./expressions.js";
 import { branchMnemonics, modeSize, opcodes, type AddressingMode } from "./opcodes.js";
 import { preprocessSource } from "./preprocessor.js";
 import type { AssemblyDiagnostic, AssemblyResult, ListingLine, SourceLine, SymbolEntry } from "./types.js";
@@ -131,8 +131,11 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
       const expression = line.operands[0];
       if (expression === undefined) {
         diagnostics.push(makeDiagnostic(line, ".org requires an expression operand"));
-      } else if (evaluateExpression(expression, passState.symbols, location) === null) {
-        diagnostics.push(makeDiagnostic(line, `Unable to resolve .org expression: ${expression}`));
+      } else {
+        const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
+        if (evaluation.value === null) {
+          diagnostics.push(makeDiagnostic(line, `.org expression error (${expression}): ${evaluation.error ?? "invalid expression"}`));
+        }
       }
       continue;
     }
@@ -144,16 +147,22 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
       const expression = line.operands[0];
       if (expression === undefined) {
         diagnostics.push(makeDiagnostic(line, ".equ requires an expression operand"));
-      } else if (evaluateExpression(expression, passState.symbols, location) === null) {
-        diagnostics.push(makeDiagnostic(line, `Unable to resolve .equ expression: ${expression}`));
+      } else {
+        const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
+        if (evaluation.value === null) {
+          diagnostics.push(makeDiagnostic(line, `.equ expression error (${expression}): ${evaluation.error ?? "invalid expression"}`));
+        }
       }
       continue;
     }
 
     if (mnemonic === ".BYTE") {
       line.operands.forEach((expression) => {
-        if (evaluateExpression(expression, passState.symbols, location) === null) {
-          diagnostics.push(makeDiagnostic(line, `Unable to resolve byte expression: ${expression}`));
+        const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
+        if (evaluation.value === null) {
+          diagnostics.push(
+            makeDiagnostic(line, `byte expression error (${expression}): ${evaluation.error ?? "invalid expression"}`),
+          );
         }
       });
       location += line.operands.length;
@@ -162,8 +171,11 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
 
     if (mnemonic === ".WORD") {
       line.operands.forEach((expression) => {
-        if (evaluateExpression(expression, passState.symbols, location) === null) {
-          diagnostics.push(makeDiagnostic(line, `Unable to resolve word expression: ${expression}`));
+        const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
+        if (evaluation.value === null) {
+          diagnostics.push(
+            makeDiagnostic(line, `word expression error (${expression}): ${evaluation.error ?? "invalid expression"}`),
+          );
         }
       });
       location += line.operands.length * 2;
@@ -183,7 +195,14 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
     }
 
     if (modeNeedsValue(resolved.mode) && resolved.value === null) {
-      diagnostics.push(makeDiagnostic(line, `Unable to resolve operand expression: ${line.operands.join(", ")}`));
+      const operandText = line.operands.join(", ");
+      const detail = resolveOperandDiagnostic(mnemonic, line.operands, passState.symbols, location);
+      diagnostics.push(
+        makeDiagnostic(
+          line,
+          `operand expression error (${operandText.length > 0 ? operandText : "<empty>"}): ${detail ?? "invalid expression"}`,
+        ),
+      );
       continue;
     }
 
@@ -199,6 +218,50 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
   }
 
   return diagnostics;
+}
+
+function resolveOperandDiagnostic(
+  mnemonic: string,
+  operands: readonly string[],
+  symbols: ReadonlyMap<string, number>,
+  location: number,
+): string | null {
+  const operand = operands.join(", ").trim();
+  if (operand.length === 0) {
+    return "missing operand";
+  }
+
+  let expression = operand;
+
+  if (branchMnemonics.has(mnemonic)) {
+    expression = operand;
+  } else {
+    const immediate = operand.match(/^#\s*(.+)$/i);
+    if (immediate?.[1] !== undefined) {
+      expression = immediate[1];
+    } else {
+      const indexedIndirect = operand.match(/^\(\s*(.+)\s*,\s*X\s*\)$/i);
+      const indirectIndexed = operand.match(/^\(\s*(.+)\s*\)\s*,\s*Y\s*$/i);
+      const indirect = operand.match(/^\(\s*(.+)\s*\)$/i);
+      const xIndexed = operand.match(/^(.+)\s*,\s*X\s*$/i);
+      const yIndexed = operand.match(/^(.+)\s*,\s*Y\s*$/i);
+
+      if (indexedIndirect?.[1] !== undefined) {
+        expression = indexedIndirect[1];
+      } else if (indirectIndexed?.[1] !== undefined) {
+        expression = indirectIndexed[1];
+      } else if (indirect?.[1] !== undefined) {
+        expression = indirect[1];
+      } else if (xIndexed?.[1] !== undefined) {
+        expression = xIndexed[1];
+      } else if (yIndexed?.[1] !== undefined) {
+        expression = yIndexed[1];
+      }
+    }
+  }
+
+  const evaluation = evaluateExpressionDetailed(expression, symbols, location);
+  return evaluation.error;
 }
 
 function buildListingOnly(lines: readonly SourceLine[]): ListingLine[] {

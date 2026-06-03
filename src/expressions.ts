@@ -1,10 +1,23 @@
+export interface ExpressionEvaluation {
+  readonly value: number | null;
+  readonly error: string | null;
+}
+
 export function evaluateExpression(
   expression: string,
   symbols: ReadonlyMap<string, number>,
   location: number,
 ): number | null {
+  return evaluateExpressionDetailed(expression, symbols, location).value;
+}
+
+export function evaluateExpressionDetailed(
+  expression: string,
+  symbols: ReadonlyMap<string, number>,
+  location: number,
+): ExpressionEvaluation {
   const parser = new ExpressionParser(expression, symbols, location);
-  return parser.parse();
+  return parser.parseDetailed();
 }
 
 class ExpressionParser {
@@ -12,6 +25,7 @@ class ExpressionParser {
   private readonly symbols: ReadonlyMap<string, number>;
   private readonly location: number;
   private position = 0;
+  private error: string | null = null;
 
   constructor(input: string, symbols: ReadonlyMap<string, number>, location: number) {
     this.input = input;
@@ -19,23 +33,26 @@ class ExpressionParser {
     this.location = location;
   }
 
-  parse(): number | null {
+  parseDetailed(): ExpressionEvaluation {
     this.skipWhitespace();
     if (this.position >= this.input.length) {
-      return null;
+      return { value: null, error: "empty expression" };
     }
 
     const value = this.parseBitwiseOr();
     if (value === null) {
-      return null;
+      return { value: null, error: this.error ?? "invalid expression" };
     }
 
     this.skipWhitespace();
     if (this.position !== this.input.length) {
-      return null;
+      return {
+        value: null,
+        error: `unexpected token '${this.input[this.position] ?? "<eof>"}' at column ${this.position + 1}`,
+      };
     }
 
-    return value & 0xffff;
+    return { value: value & 0xffff, error: null };
   }
 
   private parseBitwiseOr(): number | null {
@@ -144,6 +161,7 @@ class ExpressionParser {
       if (this.consume("/")) {
         const right = this.parseUnary();
         if (right === null || right === 0) {
+          this.fail("division by zero");
           return null;
         }
         left = Math.trunc(left / right) & 0xffff;
@@ -153,6 +171,7 @@ class ExpressionParser {
       if (this.consume("%")) {
         const right = this.parseUnary();
         if (right === null || right === 0) {
+          this.fail("modulo by zero");
           return null;
         }
         left = (left % right) & 0xffff;
@@ -192,6 +211,7 @@ class ExpressionParser {
       const value = this.parseBitwiseOr();
       this.skipWhitespace();
       if (value === null || !this.consume(")")) {
+        this.fail("missing ')' in expression");
         return null;
       }
       return value;
@@ -209,9 +229,16 @@ class ExpressionParser {
 
     const identifier = this.parseIdentifier();
     if (identifier !== null) {
-      return this.symbols.get(identifier.toUpperCase()) ?? null;
+      const resolved = this.symbols.get(identifier.toUpperCase());
+      if (resolved === undefined) {
+        this.fail(`unknown symbol '${identifier}'`);
+        return null;
+      }
+
+      return resolved;
     }
 
+    this.fail(`invalid token '${this.input[this.position] ?? "<eof>"}' at column ${this.position + 1}`);
     return null;
   }
 
@@ -271,6 +298,12 @@ class ExpressionParser {
   private skipWhitespace(): void {
     while (this.position < this.input.length && /\s/.test(this.input[this.position]!)) {
       this.position += 1;
+    }
+  }
+
+  private fail(message: string): void {
+    if (this.error === null) {
+      this.error = message;
     }
   }
 }

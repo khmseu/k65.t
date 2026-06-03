@@ -83,6 +83,19 @@ test("assemble reports diagnostics for unresolved symbols and unknown mnemonics"
 
   assert.equal(result.binary.length, 0);
   assert.equal(result.diagnostics.length, 2);
-  assert.ok(result.diagnostics.some((entry) => entry.message.includes("Unable to resolve operand expression")));
+  assert.ok(result.diagnostics.some((entry) => entry.message.includes("unknown symbol 'missing_symbol'")));
   assert.ok(result.diagnostics.some((entry) => entry.message.includes("Unknown mnemonic: FOO")));
+});
+
+test("assemble reports divide-by-zero in expression diagnostics", () => {
+  const source = [
+    ".org $8200",
+    "start lda #(10 / (3 - 3))",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.binary.length, 0);
+  assert.equal(result.diagnostics.length, 1);
+  assert.ok(result.diagnostics[0]?.message.includes("division by zero"));
 });
