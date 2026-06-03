@@ -1,5 +1,6 @@
 import { parseSource } from "./parser.js";
 import { branchMnemonics, modeSize, opcodes, type AddressingMode } from "./opcodes.js";
+import { preprocessSource } from "./preprocessor.js";
 import type { AssemblyResult, ListingLine, SourceLine, SymbolEntry } from "./types.js";
 
 const MAX_PASSES = 10;
@@ -22,7 +23,7 @@ interface PassState {
 }
 
 export function assemble(sourceText: string): AssemblyResult {
-  const parsed = parseSource(sourceText);
+  const parsed = parseSource(preprocessSource(sourceText));
 
   const sized = runSizingPasses(parsed);
   const emitted = emitBinary(parsed, sized);

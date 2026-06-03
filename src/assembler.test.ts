@@ -32,3 +32,21 @@ test("assemble supports labels, forward references, directives, and listing form
   assert.ok(listingText.includes("8005 E8 loop   INX"));
   assert.ok(listingText.includes("8006 D0 FD        BNE loop"));
 });
+
+test("assemble expands simple macros before pass resolution", () => {
+  const source = [
+    ".org $9000",
+    ".macro loadpair, left, right",
+    "  lda #\\left",
+    "  ldx #\\right",
+    ".endmacro",
+    "start loadpair 1, 2",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.startAddress, 0x9000);
+  assert.deepEqual(Array.from(result.binary), [0xa9, 0x01, 0xa2, 0x02]);
+  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x9000);
+  assert.ok(formatListing(result.listing).includes("9000 A9 01 start lda #1"));
+});

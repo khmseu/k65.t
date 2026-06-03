@@ -8,6 +8,7 @@
 - Produce a listing with address, output byte count, and source text.
 - Emit a symbol table for resolved labels and constants.
 - Accept optional labels, optional trailing colons, comma-separated operands, inline semicolon comments, pure comment lines starting with `;` or `*`, and blank lines.
+- Expand simple macros defined with `.macro name, arg1, arg2` and terminated by `.endmacro`, using `\arg1`-style substitution inside the macro body.
 
 ## Recommended VS Code extensions
 
