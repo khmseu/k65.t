@@ -75,6 +75,33 @@ test("assemble resolves equ-style constants and parenthesized expressions", () =
   assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8800);
 });
 
+test("assemble allows single-character string literals in expressions", () => {
+  const source = [
+    ".org $8810",
+    "start .byte 'A', \"B\", '\\n'",
+    "      lda #'C'",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0x41, 0x42, 0x0a, 0xa9, 0x43]);
+  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8810);
+});
+
+test("assemble reports multi-character string literals in expressions", () => {
+  const source = [
+    ".org $8820",
+    "      .byte 'AB'",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.binary.length, 0);
+  assert.equal(result.diagnostics.length, 1);
+  assert.equal(result.diagnostics[0]?.code, "E_EXPR_STRING_LENGTH");
+});
+
 test("assemble resolves cheap labels within the nearest non-cheap label scope", () => {
   const source = [
     ".org $8C00",

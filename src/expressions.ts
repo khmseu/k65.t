@@ -236,6 +236,11 @@ class ExpressionParser {
       return this.location & 0xffff;
     }
 
+    const stringLiteral = this.parseSingleCharStringLiteral();
+    if (stringLiteral !== undefined) {
+      return stringLiteral;
+    }
+
     const number = this.parseNumber();
     if (number !== null) {
       return number;
@@ -258,6 +263,92 @@ class ExpressionParser {
       "E_EXPR_INVALID_TOKEN",
       this.position + 1,
     );
+    return null;
+  }
+
+  private parseSingleCharStringLiteral(): number | null | undefined {
+    const quote = this.peek();
+    if (quote !== "\"" && quote !== "'") {
+      return undefined;
+    }
+
+    const startColumn = this.position + 1;
+    this.position += 1;
+
+    if (this.position >= this.input.length) {
+      this.fail("unterminated string literal", "E_EXPR_STRING_UNTERMINATED", startColumn);
+      return null;
+    }
+
+    let value: number;
+    const ch = this.input[this.position]!;
+    if (ch === "\\") {
+      this.position += 1;
+      const escaped = this.parseEscapedCharacter(startColumn);
+      if (escaped === null) {
+        return null;
+      }
+      value = escaped;
+    } else {
+      value = ch.charCodeAt(0);
+      this.position += 1;
+    }
+
+    const closing = this.peek();
+    if (closing === undefined) {
+      this.fail("unterminated string literal", "E_EXPR_STRING_UNTERMINATED", startColumn);
+      return null;
+    }
+
+    if (closing !== quote) {
+      this.fail("expression string literal must contain exactly one character", "E_EXPR_STRING_LENGTH", startColumn);
+      return null;
+    }
+
+    this.position += 1;
+    return value & 0xffff;
+  }
+
+  private parseEscapedCharacter(startColumn: number): number | null {
+    if (this.position >= this.input.length) {
+      this.fail("invalid escape in string literal", "E_EXPR_STRING_ESCAPE", startColumn);
+      return null;
+    }
+
+    const escaped = this.input[this.position]!;
+    this.position += 1;
+
+    if (escaped === "n") {
+      return 0x0a;
+    }
+    if (escaped === "r") {
+      return 0x0d;
+    }
+    if (escaped === "t") {
+      return 0x09;
+    }
+    if (escaped === "\\") {
+      return 0x5c;
+    }
+    if (escaped === "\"") {
+      return 0x22;
+    }
+    if (escaped === "'") {
+      return 0x27;
+    }
+
+    if (escaped === "x") {
+      const hex = this.input.slice(this.position, this.position + 2);
+      if (/^[0-9a-f]{2}$/i.test(hex)) {
+        this.position += 2;
+        return Number.parseInt(hex, 16);
+      }
+
+      this.fail("invalid \\xHH escape in string literal", "E_EXPR_STRING_ESCAPE", startColumn);
+      return null;
+    }
+
+    this.fail("invalid escape in string literal", "E_EXPR_STRING_ESCAPE", startColumn);
     return null;
   }
 
