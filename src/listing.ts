@@ -69,23 +69,60 @@ export function formatListing(
   let currentTitle: string | undefined;
   let currentSubtitle: string | undefined;
 
-  // Pre-compute: for each .page/.eject, find and mark preceding .title/.subttl directives to skip
+  // Pre-compute: for each .page/.eject, collect and mark preceding listing directives to skip
+  const precedingDirectives = new Map<number, number[]>(); // Maps .page index to list of directive indices before it
   const skipped = new Set<number>();
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line !== undefined && line.pageBreak) {
-      // Look back immediately before this line for .title and .subttl directives
-      for (let j = i - 1; j >= 0 && j >= i - 2; j--) {
+      // Look back for all consecutive listing directives before this .page/.eject
+      const directives: number[] = [];
+      for (let j = i - 1; j >= 0; j--) {
         const prev = lines[j];
         if (prev !== undefined && prev.address === null) {
           const src = prev.source.toUpperCase();
-          if (src.startsWith(".SUBTTL") || src.startsWith(".TITLE")) {
-            skipped.add(j); // Mark for skipping from normal output
+          // Stop if we hit another .page/.eject (but not .pagesize, .bytesperline)
+          if (
+            src === ".PAGE" ||
+            src.startsWith(".PAGE ") ||
+            src === ".EJECT" ||
+            src.startsWith(".EJECT ")
+          ) {
+            break; // Stop at another page break
           }
+          // Collect all listing directives
+          if (
+            src === ".TITLE" ||
+            src.startsWith(".TITLE ") ||
+            src === ".SUBTTL" ||
+            src.startsWith(".SUBTTL ") ||
+            src === ".PAGESIZE" ||
+            src.startsWith(".PAGESIZE ") ||
+            src === ".BYTESPERLINE" ||
+            src.startsWith(".BYTESPERLINE ") ||
+            src === ".LIST" ||
+            src.startsWith(".LIST ") ||
+            src === ".NOLIST" ||
+            src.startsWith(".NOLIST ")
+          ) {
+            directives.unshift(j); // Add to front to maintain order
+            skipped.add(j);
+          } else if (prev.bytes.length === 0) {
+            // Continue past non-listing directives (comments/empty lines)
+            continue;
+          } else {
+            break; // Stop at content lines
+          }
+        } else if (prev !== undefined && prev.address !== null) {
+          break; // Stop at content lines
         }
+      }
+      if (directives.length > 0) {
+        precedingDirectives.set(i, directives);
       }
     }
   }
+
 
   for (let i = 0; i < lines.length; i++) {
     if (skipped.has(i)) {
@@ -134,27 +171,17 @@ export function formatListing(
         hasContentOnCurrentPage = true;
       }
 
-      // Now emit .title and .subttl directives that preceded this .page
+      // Now emit any directives that preceded this .page
       // (they were marked as skipped to remove them from normal output)
-      // Emit in order: .title first, then .subttl (they appear before .page in reverse index order)
-      const titleLine = i > 1 ? lines[i - 2] : undefined;
-      const subttlLine = i > 0 ? lines[i - 1] : undefined;
-
-      if (
-        titleLine !== undefined &&
-        titleLine.address === null &&
-        titleLine.source.toUpperCase().startsWith(".TITLE")
-      ) {
-        const formatted = formatListingLine(titleLine, { bytesPerLine });
-        formattedLines.push(...formatted);
-      }
-      if (
-        subttlLine !== undefined &&
-        subttlLine.address === null &&
-        subttlLine.source.toUpperCase().startsWith(".SUBTTL")
-      ) {
-        const formatted = formatListingLine(subttlLine, { bytesPerLine });
-        formattedLines.push(...formatted);
+      const precedingDirs = precedingDirectives.get(i);
+      if (precedingDirs !== undefined) {
+        for (const dirIdx of precedingDirs) {
+          const dirLine = lines[dirIdx];
+          if (dirLine !== undefined) {
+            const formatted = formatListingLine(dirLine, { bytesPerLine });
+            formattedLines.push(...formatted);
+          }
+        }
       }
     }
 
