@@ -51,42 +51,9 @@ export function formatListing(lines: readonly ListingLine[], options: ListingFor
   let pageNumber = 1;
   let currentTitle: string | undefined;
   let currentSubtitle: string | undefined;
-  let pageHeaderNeeded = true;
+  let pageHeaderNeeded = false; // Only insert headers after the first page break
   
   for (const line of lines) {
-    // Check if we need to start a new page
-    const forcePageBreak = line.pageBreak ?? false;
-    
-    // Insert page break if needed
-    if (forcePageBreak && currentPageLineCount > 0) {
-      // Force a page break
-      formattedLines.push(""); // Blank line to show page separation
-      currentPageLineCount += 1;
-      pageHeaderNeeded = true;
-      pageNumber += 1;
-    }
-    
-    // Check if we need automatic page break due to page size
-    if (pageSize > 0 && currentPageLineCount >= pageSize) {
-      formattedLines.push(""); // Blank line for page separation
-      currentPageLineCount = 1;
-      pageHeaderNeeded = true;
-      pageNumber += 1;
-    }
-    
-    // Insert page header if needed
-    if (pageHeaderNeeded && pageSize > 0) {
-      if (currentTitle !== undefined) {
-        formattedLines.push(currentTitle);
-        currentPageLineCount += 1;
-      }
-      if (currentSubtitle !== undefined) {
-        formattedLines.push(currentSubtitle);
-        currentPageLineCount += 1;
-      }
-      pageHeaderNeeded = false;
-    }
-    
     // Update title/subtitle if present on this line
     if (line.title !== undefined) {
       currentTitle = line.title;
@@ -95,10 +62,50 @@ export function formatListing(lines: readonly ListingLine[], options: ListingFor
       currentSubtitle = line.subtitle;
     }
     
+    // Only apply paging logic to lines with content (address !== null)
+    const isContentLine = line.address !== null;
+    
+    if (isContentLine) {
+      // Check if we need to start a new page
+      const forcePageBreak = line.pageBreak ?? false;
+      
+      // Insert page break if this line forces it
+      if (forcePageBreak && currentPageLineCount > 0) {
+        // Force a page break - insert blank line separator
+        formattedLines.push("");
+        currentPageLineCount = 0;
+        pageHeaderNeeded = true; // Enable header insertion for next page
+        pageNumber += 1;
+      }
+      
+      // Check if we need automatic page break due to page size
+      if (pageSize > 0 && currentPageLineCount >= pageSize) {
+        formattedLines.push(""); // Blank line for page separation
+        currentPageLineCount = 0;
+        pageHeaderNeeded = true; // Enable header insertion for next page
+        pageNumber += 1;
+      }
+      
+      // Insert page header if needed (only after a page break, not on first page)
+      if (pageHeaderNeeded && pageSize > 0) {
+        if (currentTitle !== undefined) {
+          formattedLines.push(currentTitle);
+        }
+        if (currentSubtitle !== undefined) {
+          formattedLines.push(currentSubtitle);
+        }
+        pageHeaderNeeded = false;
+      }
+    }
+    
     // Format the actual line
     const formatted = formatListingLine(line, { bytesPerLine });
     formattedLines.push(...formatted);
-    currentPageLineCount += formatted.length;
+    
+    // Only count content lines toward page size
+    if (isContentLine) {
+      currentPageLineCount += formatted.length;
+    }
   }
   
   return formattedLines.join("\n");
