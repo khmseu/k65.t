@@ -59,7 +59,9 @@ export function parseCliArgs(args: readonly string[]): CliOptions {
   }
 
   if (inputPath === undefined) {
-    throw new Error("Usage: k65t [--out-dir DIR] [--bin FILE] [--lst FILE] [--sym FILE] <input.asm>");
+    throw new Error(
+      "Usage: k65t [--out-dir DIR] [--bin FILE] [--lst FILE] [--sym FILE] <input.asm>",
+    );
   }
 
   return {

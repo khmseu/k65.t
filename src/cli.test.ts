@@ -31,7 +31,10 @@ test("parseCliArgs supports explicit output flags and shared output directory", 
 });
 
 test("parseCliArgs rejects unknown flags", () => {
-  assert.throws(() => parseCliArgs(["--bogus", "program.asm"]), /Unknown option: --bogus/);
+  assert.throws(
+    () => parseCliArgs(["--bogus", "program.asm"]),
+    /Unknown option: --bogus/,
+  );
 });
 
 test("parseCliArgs rejects missing option values", () => {

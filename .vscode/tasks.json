@@ -1,22 +1,20 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "VersionLens: NPM Install",
-            "command": "npm",
-            "type": "shell",
-            "args": [
-                "install"
-            ],
-            "options": {
-                "cwd": "${fileDirname}"
-            },
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "panel": "shared",
-                "clear": true
-            }
-        }
-    ]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "VersionLens: NPM Install",
+      "command": "npm",
+      "type": "shell",
+      "args": ["install"],
+      "options": {
+        "cwd": "${fileDirname}"
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    }
+  ]
 }

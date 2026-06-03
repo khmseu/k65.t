@@ -294,7 +294,7 @@ Example:
 
 In the listing, this produces:
 
-```
+```text
 8000 00 01 02 03 04 05 06 07
 8008 08 09
 ```

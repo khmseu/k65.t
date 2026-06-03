@@ -23,7 +23,12 @@ export class PreprocessError extends Error {
   readonly lineNumber: number;
   readonly source: string;
 
-  constructor(code: string, message: string, lineNumber: number, source: string) {
+  constructor(
+    code: string,
+    message: string,
+    lineNumber: number,
+    source: string,
+  ) {
     super(message);
     this.name = "PreprocessError";
     this.code = code;
@@ -32,10 +37,16 @@ export class PreprocessError extends Error {
   }
 }
 
-export function preprocessSource(text: string, options: PreprocessOptions = {}): string {
+export function preprocessSource(
+  text: string,
+  options: PreprocessOptions = {},
+): string {
   const sourcePath = options.sourcePath;
-  const currentDir = options.currentDir ?? (sourcePath === undefined ? process.cwd() : dirname(sourcePath));
-  const readFile = options.readFile ?? ((filePath: string) => readFileSync(filePath, "utf8"));
+  const currentDir =
+    options.currentDir ??
+    (sourcePath === undefined ? process.cwd() : dirname(sourcePath));
+  const readFile =
+    options.readFile ?? ((filePath: string) => readFileSync(filePath, "utf8"));
   const macros = new Map<string, MacroDefinition>();
 
   const output = preprocessLines(
@@ -61,7 +72,11 @@ interface IncludeContext {
   readonly includeDepth: number;
 }
 
-function preprocessLines(lines: readonly string[], context: IncludeContext, macros: Map<string, MacroDefinition>): string[] {
+function preprocessLines(
+  lines: readonly string[],
+  context: IncludeContext,
+  macros: Map<string, MacroDefinition>,
+): string[] {
   const output: string[] = [];
 
   for (let i = 0; i < lines.length; i += 1) {
@@ -72,28 +87,55 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
     if (parsed.kind === "code" && mnemonic === ".INCLUDE") {
       const includeOperand = parsed.operands[0];
       if (includeOperand === undefined) {
-        throw new PreprocessError("E_INCLUDE_OPERAND", ".include requires a quoted file path", parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_INCLUDE_OPERAND",
+          ".include requires a quoted file path",
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
       const includePath = parseIncludePath(includeOperand);
       if (includePath === null) {
-        throw new PreprocessError("E_INCLUDE_PATH", `.include path must be a quoted string: ${includeOperand}`, parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_INCLUDE_PATH",
+          `.include path must be a quoted string: ${includeOperand}`,
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
       if (context.includeDepth >= MAX_INCLUDE_DEPTH) {
-        throw new PreprocessError("E_INCLUDE_DEPTH", "Maximum include depth exceeded", parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_INCLUDE_DEPTH",
+          "Maximum include depth exceeded",
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
-      const resolvedPath = isAbsolute(includePath) ? resolve(includePath) : resolve(join(context.currentDir, includePath));
+      const resolvedPath = isAbsolute(includePath)
+        ? resolve(includePath)
+        : resolve(join(context.currentDir, includePath));
       if (context.includeStack.includes(resolvedPath)) {
-        throw new PreprocessError("E_INCLUDE_CYCLE", `Circular include detected for ${resolvedPath}`, parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_INCLUDE_CYCLE",
+          `Circular include detected for ${resolvedPath}`,
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
       let includedText: string;
       try {
         includedText = context.readFile(resolvedPath);
       } catch {
-        throw new PreprocessError("E_INCLUDE_READ", `Unable to read include file: ${resolvedPath}`, parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_INCLUDE_READ",
+          `Unable to read include file: ${resolvedPath}`,
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
       const includedLines = preprocessLines(
@@ -114,7 +156,12 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
     if (parsed.kind === "code" && mnemonic === ".MACRO") {
       const name = parsed.operands[0]?.trim();
       if (!name) {
-        throw new PreprocessError("E_MACRO_NAME", `Missing macro name on line ${parsed.lineNumber}`, parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_MACRO_NAME",
+          `Missing macro name on line ${parsed.lineNumber}`,
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
       const body: string[] = [];
@@ -123,7 +170,10 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
       for (i += 1; i < lines.length; i += 1) {
         const bodyLine = lines[i]!;
         const bodyParsed = parseSource(bodyLine)[0]!;
-        if (bodyParsed.kind === "code" && bodyParsed.mnemonic?.toUpperCase() === ".ENDMACRO") {
+        if (
+          bodyParsed.kind === "code" &&
+          bodyParsed.mnemonic?.toUpperCase() === ".ENDMACRO"
+        ) {
           foundEnd = true;
           break;
         }
@@ -131,7 +181,12 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
       }
 
       if (!foundEnd) {
-        throw new PreprocessError("E_MACRO_UNTERMINATED", `Unterminated macro ${name}`, parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_MACRO_UNTERMINATED",
+          `Unterminated macro ${name}`,
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
       macros.set(name.toUpperCase(), {
@@ -145,7 +200,12 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
     if (parsed.kind === "code" && mnemonic === ".REPEAT") {
       const countOperand = parsed.operands[0];
       if (countOperand === undefined) {
-        throw new PreprocessError("E_REPEAT_COUNT", ".repeat requires a count operand", parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_REPEAT_COUNT",
+          ".repeat requires a count operand",
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
       const repeatEval = evaluateExpressionDetailed(countOperand, new Map(), 0);
@@ -160,7 +220,12 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
 
       const repeatCount = repeatEval.value;
       if (repeatCount < 0) {
-        throw new PreprocessError("E_REPEAT_RANGE", ".repeat count must be non-negative", parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_REPEAT_RANGE",
+          ".repeat count must be non-negative",
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
       const block: string[] = [];
@@ -188,7 +253,12 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
       }
 
       if (!foundEnd) {
-        throw new PreprocessError("E_REPEAT_UNTERMINATED", "Unterminated .repeat block", parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_REPEAT_UNTERMINATED",
+          "Unterminated .repeat block",
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
       for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex += 1) {
@@ -200,11 +270,19 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
     if (parsed.kind === "code" && mnemonic === ".IF") {
       const conditionOperand = parsed.operands[0];
       if (conditionOperand === undefined) {
-        throw new PreprocessError("E_IF_CONDITION", ".if requires a condition expression", parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_IF_CONDITION",
+          ".if requires a condition expression",
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
       const branches: Array<{ condition: string | null; lines: string[] }> = [];
-      let activeBranch: { condition: string | null; lines: string[] } = { condition: conditionOperand, lines: [] };
+      let activeBranch: { condition: string | null; lines: string[] } = {
+        condition: conditionOperand,
+        lines: [],
+      };
       let foundEnd = false;
       let nesting = 0;
       let sawElse = false;
@@ -231,22 +309,45 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
           continue;
         }
 
-        if (nesting === 0 && bodyParsed.kind === "code" && bodyMnemonic === ".ELSEIF") {
+        if (
+          nesting === 0 &&
+          bodyParsed.kind === "code" &&
+          bodyMnemonic === ".ELSEIF"
+        ) {
           if (sawElse) {
-            throw new PreprocessError("E_IF_ORDER", ".elseif cannot appear after .else", bodyParsed.lineNumber, bodyParsed.raw);
+            throw new PreprocessError(
+              "E_IF_ORDER",
+              ".elseif cannot appear after .else",
+              bodyParsed.lineNumber,
+              bodyParsed.raw,
+            );
           }
           const elseifCondition = bodyParsed.operands[0];
           if (elseifCondition === undefined) {
-            throw new PreprocessError("E_IF_CONDITION", ".elseif requires a condition expression", bodyParsed.lineNumber, bodyParsed.raw);
+            throw new PreprocessError(
+              "E_IF_CONDITION",
+              ".elseif requires a condition expression",
+              bodyParsed.lineNumber,
+              bodyParsed.raw,
+            );
           }
           branches.push(activeBranch);
           activeBranch = { condition: elseifCondition, lines: [] };
           continue;
         }
 
-        if (nesting === 0 && bodyParsed.kind === "code" && bodyMnemonic === ".ELSE") {
+        if (
+          nesting === 0 &&
+          bodyParsed.kind === "code" &&
+          bodyMnemonic === ".ELSE"
+        ) {
           if (sawElse) {
-            throw new PreprocessError("E_IF_ORDER", "Only one .else is allowed per .if block", bodyParsed.lineNumber, bodyParsed.raw);
+            throw new PreprocessError(
+              "E_IF_ORDER",
+              "Only one .else is allowed per .if block",
+              bodyParsed.lineNumber,
+              bodyParsed.raw,
+            );
           }
           sawElse = true;
           branches.push(activeBranch);
@@ -258,10 +359,19 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
       }
 
       if (!foundEnd) {
-        throw new PreprocessError("E_IF_UNTERMINATED", "Unterminated .if block", parsed.lineNumber, parsed.raw);
+        throw new PreprocessError(
+          "E_IF_UNTERMINATED",
+          "Unterminated .if block",
+          parsed.lineNumber,
+          parsed.raw,
+        );
       }
 
-      const selectedBranch = selectConditionalBranch(branches, parsed.lineNumber, parsed.raw);
+      const selectedBranch = selectConditionalBranch(
+        branches,
+        parsed.lineNumber,
+        parsed.raw,
+      );
       if (selectedBranch !== undefined) {
         output.push(...preprocessLines(selectedBranch.lines, context, macros));
       }
@@ -269,11 +379,24 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
     }
 
     if (parsed.kind === "code" && mnemonic === ".ENDREPEAT") {
-      throw new PreprocessError("E_REPEAT_UNEXPECTED_END", "Unexpected .endrepeat", parsed.lineNumber, parsed.raw);
+      throw new PreprocessError(
+        "E_REPEAT_UNEXPECTED_END",
+        "Unexpected .endrepeat",
+        parsed.lineNumber,
+        parsed.raw,
+      );
     }
 
-    if (parsed.kind === "code" && (mnemonic === ".ELSE" || mnemonic === ".ELSEIF" || mnemonic === ".ENDIF")) {
-      throw new PreprocessError("E_IF_UNEXPECTED_END", `Unexpected ${mnemonic.toLowerCase()}`, parsed.lineNumber, parsed.raw);
+    if (
+      parsed.kind === "code" &&
+      (mnemonic === ".ELSE" || mnemonic === ".ELSEIF" || mnemonic === ".ENDIF")
+    ) {
+      throw new PreprocessError(
+        "E_IF_UNEXPECTED_END",
+        `Unexpected ${mnemonic.toLowerCase()}`,
+        parsed.lineNumber,
+        parsed.raw,
+      );
     }
 
     output.push(...expandLine(line, macros, 0));
@@ -282,9 +405,18 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
   return output;
 }
 
-function expandLine(line: string, macros: ReadonlyMap<string, MacroDefinition>, depth: number): string[] {
+function expandLine(
+  line: string,
+  macros: ReadonlyMap<string, MacroDefinition>,
+  depth: number,
+): string[] {
   if (depth > MAX_EXPANSION_DEPTH) {
-    throw new PreprocessError("E_MACRO_DEPTH", "Macro expansion depth exceeded", 0, line);
+    throw new PreprocessError(
+      "E_MACRO_DEPTH",
+      "Macro expansion depth exceeded",
+      0,
+      line,
+    );
   }
 
   const parsed = parseSource(line)[0]!;
@@ -298,16 +430,23 @@ function expandLine(line: string, macros: ReadonlyMap<string, MacroDefinition>, 
   }
 
   const replacements = buildReplacementMap(macro.parameters, parsed.operands);
-  const expandedLines = macro.body.map((bodyLine) => substituteParameters(bodyLine, replacements));
+  const expandedLines = macro.body.map((bodyLine) =>
+    substituteParameters(bodyLine, replacements),
+  );
 
   if (parsed.label !== undefined && expandedLines.length > 0) {
     expandedLines[0] = attachLabel(parsed.label, expandedLines[0]!);
   }
 
-  return expandedLines.flatMap((expandedLine) => expandLine(expandedLine, macros, depth + 1));
+  return expandedLines.flatMap((expandedLine) =>
+    expandLine(expandedLine, macros, depth + 1),
+  );
 }
 
-function buildReplacementMap(parameters: readonly string[], values: readonly string[]): Map<string, string> {
+function buildReplacementMap(
+  parameters: readonly string[],
+  values: readonly string[],
+): Map<string, string> {
   const replacements = new Map<string, string>();
 
   parameters.forEach((parameter, index) => {
@@ -318,7 +457,10 @@ function buildReplacementMap(parameters: readonly string[], values: readonly str
   return replacements;
 }
 
-function substituteParameters(line: string, replacements: ReadonlyMap<string, string>): string {
+function substituteParameters(
+  line: string,
+  replacements: ReadonlyMap<string, string>,
+): string {
   let expanded = line;
 
   for (const [name, value] of replacements.entries()) {
@@ -348,7 +490,10 @@ function parseIncludePath(operand: string): string | null {
   }
 
   const quote = trimmed[0];
-  if ((quote !== "\"" && quote !== "'") || trimmed[trimmed.length - 1] !== quote) {
+  if (
+    (quote !== '"' && quote !== "'") ||
+    trimmed[trimmed.length - 1] !== quote
+  ) {
     return null;
   }
 
@@ -365,7 +510,11 @@ function selectConditionalBranch(
       return branch;
     }
 
-    const evaluation = evaluateExpressionDetailed(branch.condition, new Map(), 0);
+    const evaluation = evaluateExpressionDetailed(
+      branch.condition,
+      new Map(),
+      0,
+    );
     if (evaluation.value === null) {
       throw new PreprocessError(
         evaluation.errorCode ?? "E_EXPR_INVALID",

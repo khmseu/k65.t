@@ -24,9 +24,14 @@ test("assemble supports labels, forward references, directives, and listing form
 
   assert.equal(result.startAddress, 0x8000);
   assert.equal(result.diagnostics.length, 0);
-  assert.deepEqual(Array.from(result.binary), [0xa9, 0x01, 0x8d, 0x00, 0x02, 0xe8, 0xd0, 0xfd, 0xaa, 0x02, 0x00, 0x80]);
+  assert.deepEqual(
+    Array.from(result.binary),
+    [0xa9, 0x01, 0x8d, 0x00, 0x02, 0xe8, 0xd0, 0xfd, 0xaa, 0x02, 0x00, 0x80],
+  );
 
-  const symbolMap = new Map(result.symbols.map((entry) => [entry.name, entry.value]));
+  const symbolMap = new Map(
+    result.symbols.map((entry) => [entry.name, entry.value]),
+  );
   assert.equal(symbolMap.get("LOOP"), 0x8005);
   assert.equal(symbolMap.get("START"), 0x8000);
   assert.equal(symbolMap.get("TAIL"), 0x8008);
@@ -52,7 +57,10 @@ test("assemble expands simple macros before pass resolution", () => {
   assert.equal(result.startAddress, 0x9000);
   assert.equal(result.diagnostics.length, 0);
   assert.deepEqual(Array.from(result.binary), [0xa9, 0x01, 0xa2, 0x02]);
-  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x9000);
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "START")?.value,
+    0x9000,
+  );
   assert.ok(formatListing(result.listing).includes("9000 A9 01 start lda #1"));
 });
 
@@ -69,10 +77,22 @@ test("assemble resolves equ-style constants and parenthesized expressions", () =
   const result = assemble(source);
 
   assert.equal(result.diagnostics.length, 0);
-  assert.deepEqual(Array.from(result.binary), [0xa9, 0x45, 0x85, 0x21, 0x46, 0x88]);
-  assert.equal(result.symbols.find((entry) => entry.name === "BASE")?.value, 0x20);
-  assert.equal(result.symbols.find((entry) => entry.name === "OFFSET")?.value, 0x46);
-  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8800);
+  assert.deepEqual(
+    Array.from(result.binary),
+    [0xa9, 0x45, 0x85, 0x21, 0x46, 0x88],
+  );
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "BASE")?.value,
+    0x20,
+  );
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "OFFSET")?.value,
+    0x46,
+  );
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "START")?.value,
+    0x8800,
+  );
 });
 
 test("assemble allows single-character string literals in expressions", () => {
@@ -86,14 +106,14 @@ test("assemble allows single-character string literals in expressions", () => {
 
   assert.equal(result.diagnostics.length, 0);
   assert.deepEqual(Array.from(result.binary), [0x41, 0x42, 0x0a, 0xa9, 0x43]);
-  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8810);
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "START")?.value,
+    0x8810,
+  );
 });
 
 test("assemble reports multi-character string literals in expressions", () => {
-  const source = [
-    ".org $8820",
-    "      .byte 'AB'",
-  ].join("\n");
+  const source = [".org $8820", "      .byte 'AB'"].join("\n");
 
   const result = assemble(source);
 
@@ -116,7 +136,9 @@ test("assemble accepts label-only lines as zero-size anchors", () => {
   assert.equal(result.diagnostics.length, 0);
   assert.deepEqual(Array.from(result.binary), [0xaa, 0xbb]);
 
-  const symbolMap = new Map(result.symbols.map((entry) => [entry.name, entry.value]));
+  const symbolMap = new Map(
+    result.symbols.map((entry) => [entry.name, entry.value]),
+  );
   assert.equal(symbolMap.get("START"), 0x8830);
   assert.equal(symbolMap.get("NEXT"), 0x8831);
 });
@@ -148,14 +170,17 @@ test("assemble supports unary < and > byte selectors in expressions", () => {
   const result = assemble(source);
 
   assert.equal(result.diagnostics.length, 0);
-  assert.deepEqual(Array.from(result.binary), [0xa9, 0x34, 0xa0, 0x12, 0xef, 0xbe]);
+  assert.deepEqual(
+    Array.from(result.binary),
+    [0xa9, 0x34, 0xa0, 0x12, 0xef, 0xbe],
+  );
 });
 
 test("assemble preserves semicolons and commas inside quoted string expressions", () => {
   const source = [
     ".org $8860",
-    "      cmp #(\";\"&%01111111)+1 ; this is a real comment",
-    "      cmp #(\",\"&%01111111)",
+    '      cmp #(";"&%01111111)+1 ; this is a real comment',
+    '      cmp #(","&%01111111)',
   ].join("\n");
 
   const result = assemble(source);
@@ -178,9 +203,14 @@ test("assemble resolves cheap labels within the nearest non-cheap label scope", 
   const result = assemble(source);
 
   assert.equal(result.diagnostics.length, 0);
-  assert.deepEqual(Array.from(result.binary), [0xa9, 0x01, 0xe8, 0xd0, 0xfd, 0xa9, 0x02, 0xca, 0xd0, 0xfd]);
+  assert.deepEqual(
+    Array.from(result.binary),
+    [0xa9, 0x01, 0xe8, 0xd0, 0xfd, 0xa9, 0x02, 0xca, 0xd0, 0xfd],
+  );
 
-  const symbolMap = new Map(result.symbols.map((entry) => [entry.name, entry.value]));
+  const symbolMap = new Map(
+    result.symbols.map((entry) => [entry.name, entry.value]),
+  );
   assert.equal(symbolMap.get("START"), 0x8c00);
   assert.equal(symbolMap.get("NEXT"), 0x8c05);
   assert.equal(symbolMap.get("START.@LOOP"), 0x8c02);
@@ -201,9 +231,14 @@ test("assemble supports reassignable labels with .set and =", () => {
   const result = assemble(source);
 
   assert.equal(result.diagnostics.length, 0);
-  assert.deepEqual(Array.from(result.binary), [0xa9, 0x01, 0xa2, 0x02, 0xa0, 0x03]);
+  assert.deepEqual(
+    Array.from(result.binary),
+    [0xa9, 0x01, 0xa2, 0x02, 0xa0, 0x03],
+  );
 
-  const symbolMap = new Map(result.symbols.map((entry) => [entry.name, entry.value]));
+  const symbolMap = new Map(
+    result.symbols.map((entry) => [entry.name, entry.value]),
+  );
   assert.equal(symbolMap.get("COUNT"), 3);
   assert.equal(symbolMap.get("START"), 0x8d00);
 });
@@ -219,16 +254,21 @@ test("assemble reports diagnostics for unresolved symbols and unknown mnemonics"
 
   assert.equal(result.binary.length, 0);
   assert.equal(result.diagnostics.length, 2);
-  assert.ok(result.diagnostics.some((entry) => entry.code === "E_EXPR_UNKNOWN_SYMBOL"));
-  assert.ok(result.diagnostics.some((entry) => entry.code === "E_OPCODE_UNKNOWN"));
-  assert.ok(result.diagnostics.some((entry) => entry.message.includes("unknown symbol 'missing_symbol'")));
+  assert.ok(
+    result.diagnostics.some((entry) => entry.code === "E_EXPR_UNKNOWN_SYMBOL"),
+  );
+  assert.ok(
+    result.diagnostics.some((entry) => entry.code === "E_OPCODE_UNKNOWN"),
+  );
+  assert.ok(
+    result.diagnostics.some((entry) =>
+      entry.message.includes("unknown symbol 'missing_symbol'"),
+    ),
+  );
 });
 
 test("assemble reports divide-by-zero in expression diagnostics", () => {
-  const source = [
-    ".org $8200",
-    "start lda #(10 / (3 - 3))",
-  ].join("\n");
+  const source = [".org $8200", "start lda #(10 / (3 - 3))"].join("\n");
 
   const result = assemble(source);
 
@@ -249,15 +289,18 @@ test("assemble supports .text and .fill directives", () => {
   const result = assemble(source);
 
   assert.equal(result.diagnostics.length, 0);
-  assert.deepEqual(Array.from(result.binary), [0x48, 0x49, 0x00, 0x0a, 0x2a, 0x2a, 0x2a]);
-  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8300);
+  assert.deepEqual(
+    Array.from(result.binary),
+    [0x48, 0x49, 0x00, 0x0a, 0x2a, 0x2a, 0x2a],
+  );
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "START")?.value,
+    0x8300,
+  );
 });
 
 test("assemble reports invalid .text literals", () => {
-  const source = [
-    ".org $8400",
-    "start .text \"unterminated",
-  ].join("\n");
+  const source = [".org $8400", 'start .text "unterminated'].join("\n");
 
   const result = assemble(source);
 
@@ -272,22 +315,30 @@ test("assemble resolves .include files relative to source path", async () => {
   const mainPath = join(root, "main.asm");
   const partPath = join(root, "part.asm");
 
-  await writeFile(mainPath, [".org $8500", ".include \"part.asm\""].join("\n"), "utf8");
-  await writeFile(partPath, ["start lda #$11", "      .byte $22"].join("\n"), "utf8");
+  await writeFile(
+    mainPath,
+    [".org $8500", '.include "part.asm"'].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    partPath,
+    ["start lda #$11", "      .byte $22"].join("\n"),
+    "utf8",
+  );
 
-  const mainSource = ".org $8500\n.include \"part.asm\"";
+  const mainSource = '.org $8500\n.include "part.asm"';
   const result = assemble(mainSource, { sourcePath: mainPath });
 
   assert.equal(result.diagnostics.length, 0);
   assert.deepEqual(Array.from(result.binary), [0xa9, 0x11, 0x22]);
-  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8500);
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "START")?.value,
+    0x8500,
+  );
 });
 
 test("assemble reports include read failures as diagnostics", () => {
-  const source = [
-    ".org $8600",
-    ".include \"missing-file.asm\"",
-  ].join("\n");
+  const source = [".org $8600", '.include "missing-file.asm"'].join("\n");
 
   const result = assemble(source, { sourcePath: "/tmp/k65t/main.asm" });
 
@@ -308,14 +359,14 @@ test("assemble supports .align with optional fill value", () => {
 
   assert.equal(result.diagnostics.length, 0);
   assert.deepEqual(Array.from(result.binary), [0xaa, 0xff, 0xff, 0x55]);
-  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8701);
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "START")?.value,
+    0x8701,
+  );
 });
 
 test("assemble reports invalid .align boundary", () => {
-  const source = [
-    ".org $8800",
-    "      .align 0",
-  ].join("\n");
+  const source = [".org $8800", "      .align 0"].join("\n");
 
   const result = assemble(source);
 
@@ -337,15 +388,14 @@ test("assemble expands .repeat blocks before assembly", () => {
 
   assert.equal(result.diagnostics.length, 0);
   assert.deepEqual(Array.from(result.binary), [0x7f, 0x7f, 0x7f, 0x55]);
-  assert.equal(result.symbols.find((entry) => entry.name === "TAIL")?.value, 0x8903);
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "TAIL")?.value,
+    0x8903,
+  );
 });
 
 test("assemble reports unterminated .repeat blocks", () => {
-  const source = [
-    ".org $8A00",
-    ".repeat 2",
-    "  .byte 1",
-  ].join("\n");
+  const source = [".org $8A00", ".repeat 2", "  .byte 1"].join("\n");
 
   const result = assemble(source);
 
@@ -379,7 +429,10 @@ test("assemble expands conditional assembly blocks", () => {
 
   assert.equal(result.diagnostics.length, 0);
   assert.deepEqual(Array.from(result.binary), [0x11, 0x33]);
-  assert.equal(result.symbols.find((entry) => entry.name === "TAIL")?.value, 0x8b01);
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "TAIL")?.value,
+    0x8b01,
+  );
 });
 
 test("assemble reports unterminated conditional assembly blocks", () => {
@@ -404,8 +457,8 @@ test("listing metadata directives produce visible effects in output", async () =
   const listingPath = join(root, "test.lst");
 
   const source = [
-    ".title \"Test Program\"",
-    ".subttl \"Version 1.0\"",
+    '.title "Test Program"',
+    '.subttl "Version 1.0"',
     ".pagesize 5",
     ".bytesperline 8",
     ".org $8000",
@@ -413,7 +466,7 @@ test("listing metadata directives produce visible effects in output", async () =
     "lda #$02",
     "lda #$03",
     ".page",
-    ".title \"Second Page\"",
+    '.title "Second Page"',
     "lda #$04",
     "lda #$05",
   ].join("\n");
@@ -428,30 +481,68 @@ test("listing metadata directives produce visible effects in output", async () =
   assert.equal(result.bytesPerLine, 8);
 
   // Format and write listing to disk
-  const listingText = formatListing(result.listing, { pageSize: result.pageSize, bytesPerLine: result.bytesPerLine });
+  const listingText = formatListing(result.listing, {
+    pageSize: result.pageSize,
+    bytesPerLine: result.bytesPerLine,
+  });
   await writeFile(listingPath, listingText, "utf8");
 
   // Read the listing file from disk
   const diskListing = await readFile(listingPath, "utf8");
 
   // Verify title and subtitle appear on first page
-  assert.ok(diskListing.includes("Test Program"), "First page should have title");
-  assert.ok(diskListing.includes("Version 1.0"), "First page should have subtitle");
+  assert.ok(
+    diskListing.includes("Test Program"),
+    "First page should have title",
+  );
+  assert.ok(
+    diskListing.includes("Version 1.0"),
+    "First page should have subtitle",
+  );
 
   // Verify page break (form feed character) appears between pages
-  assert.ok(diskListing.includes("\f"), "Listing should have form feed characters for page breaks");
+  assert.ok(
+    diskListing.includes("\f"),
+    "Listing should have form feed characters for page breaks",
+  );
 
   // Verify second page title appears
-  assert.ok(diskListing.includes("Second Page"), "Second page should have new title");
+  assert.ok(
+    diskListing.includes("Second Page"),
+    "Second page should have new title",
+  );
 
   // Verify metadata directives themselves do NOT appear as listing lines
-  assert.equal(!diskListing.match(/^[0-9A-F]{4}\s+\.title/m), true, ".title directive should not appear in listing");
-  assert.equal(!diskListing.match(/^[0-9A-F]{4}\s+\.subttl/m), true, ".subttl directive should not appear in listing");
-  assert.equal(!diskListing.match(/^[0-9A-F]{4}\s+\.pagesize/m), true, ".pagesize directive should not appear in listing");
-  assert.equal(!diskListing.match(/^[0-9A-F]{4}\s+\.bytesperline/m), true, ".bytesperline directive should not appear in listing");
-  assert.equal(!diskListing.match(/^[0-9A-F]{4}\s+\.page/m), true, ".page directive should not appear in listing");
+  assert.equal(
+    !diskListing.match(/^[0-9A-F]{4}\s+\.title/m),
+    true,
+    ".title directive should not appear in listing",
+  );
+  assert.equal(
+    !diskListing.match(/^[0-9A-F]{4}\s+\.subttl/m),
+    true,
+    ".subttl directive should not appear in listing",
+  );
+  assert.equal(
+    !diskListing.match(/^[0-9A-F]{4}\s+\.pagesize/m),
+    true,
+    ".pagesize directive should not appear in listing",
+  );
+  assert.equal(
+    !diskListing.match(/^[0-9A-F]{4}\s+\.bytesperline/m),
+    true,
+    ".bytesperline directive should not appear in listing",
+  );
+  assert.equal(
+    !diskListing.match(/^[0-9A-F]{4}\s+\.page/m),
+    true,
+    ".page directive should not appear in listing",
+  );
 
   // Verify actual code appears
   assert.ok(diskListing.includes("lda #$01"), "Code should appear in listing");
-  assert.ok(diskListing.includes("lda #$04"), "Code after page break should appear in listing");
+  assert.ok(
+    diskListing.includes("lda #$04"),
+    "Code after page break should appear in listing",
+  );
 });

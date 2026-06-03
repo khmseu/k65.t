@@ -108,8 +108,20 @@ export const opcodes: OpcodeMap = {
     indexedIndirect: 0xa1,
     indirectIndexed: 0xb1,
   },
-  LDX: { immediate: 0xa2, zeropage: 0xa6, zeropageY: 0xb6, absolute: 0xae, absoluteY: 0xbe },
-  LDY: { immediate: 0xa0, zeropage: 0xa4, zeropageX: 0xb4, absolute: 0xac, absoluteX: 0xbc },
+  LDX: {
+    immediate: 0xa2,
+    zeropage: 0xa6,
+    zeropageY: 0xb6,
+    absolute: 0xae,
+    absoluteY: 0xbe,
+  },
+  LDY: {
+    immediate: 0xa0,
+    zeropage: 0xa4,
+    zeropageX: 0xb4,
+    absolute: 0xac,
+    absoluteX: 0xbc,
+  },
   LSR: {
     accumulator: 0x4a,
     zeropage: 0x46,

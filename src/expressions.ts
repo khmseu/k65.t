@@ -31,7 +31,11 @@ class ExpressionParser {
   private errorCode: string | null = null;
   private errorColumn: number | null = null;
 
-  constructor(input: string, symbols: ReadonlyMap<string, number>, location: number) {
+  constructor(
+    input: string,
+    symbols: ReadonlyMap<string, number>,
+    location: number,
+  ) {
     this.input = input;
     this.symbols = symbols;
     this.location = location;
@@ -40,7 +44,12 @@ class ExpressionParser {
   parseDetailed(): ExpressionEvaluation {
     this.skipWhitespace();
     if (this.position >= this.input.length) {
-      return { value: null, error: "empty expression", errorCode: "E_EXPR_EMPTY", errorColumn: 1 };
+      return {
+        value: null,
+        error: "empty expression",
+        errorCode: "E_EXPR_EMPTY",
+        errorColumn: 1,
+      };
     }
 
     const value = this.parseBitwiseOr();
@@ -63,7 +72,12 @@ class ExpressionParser {
       };
     }
 
-    return { value: value & 0xffff, error: null, errorCode: null, errorColumn: null };
+    return {
+      value: value & 0xffff,
+      error: null,
+      errorCode: null,
+      errorColumn: null,
+    };
   }
 
   private parseBitwiseOr(): number | null {
@@ -120,7 +134,7 @@ class ExpressionParser {
         return null;
       }
 
-      left = (left & right) & 0xffff;
+      left = left & right & 0xffff;
     }
 
     return left;
@@ -206,12 +220,12 @@ class ExpressionParser {
 
     if (this.consume("-")) {
       const value = this.parseUnary();
-      return value === null ? null : (-value) & 0xffff;
+      return value === null ? null : -value & 0xffff;
     }
 
     if (this.consume("~")) {
       const value = this.parseUnary();
-      return value === null ? null : (~value) & 0xffff;
+      return value === null ? null : ~value & 0xffff;
     }
 
     if (this.consume("<")) {
@@ -235,7 +249,11 @@ class ExpressionParser {
       const value = this.parseBitwiseOr();
       this.skipWhitespace();
       if (value === null || !this.consume(")")) {
-        this.fail("missing ')' in expression", "E_EXPR_MISSING_RPAREN", openColumn);
+        this.fail(
+          "missing ')' in expression",
+          "E_EXPR_MISSING_RPAREN",
+          openColumn,
+        );
         return null;
       }
       return value;
@@ -261,7 +279,11 @@ class ExpressionParser {
       const identifierColumn = this.position - identifier.length + 1;
       const resolved = this.symbols.get(identifier.toUpperCase());
       if (resolved === undefined) {
-        this.fail(`unknown symbol '${identifier}'`, "E_EXPR_UNKNOWN_SYMBOL", identifierColumn);
+        this.fail(
+          `unknown symbol '${identifier}'`,
+          "E_EXPR_UNKNOWN_SYMBOL",
+          identifierColumn,
+        );
         return null;
       }
 
@@ -278,7 +300,7 @@ class ExpressionParser {
 
   private parseSingleCharStringLiteral(): number | null | undefined {
     const quote = this.peek();
-    if (quote !== "\"" && quote !== "'") {
+    if (quote !== '"' && quote !== "'") {
       return undefined;
     }
 
@@ -286,7 +308,11 @@ class ExpressionParser {
     this.position += 1;
 
     if (this.position >= this.input.length) {
-      this.fail("unterminated string literal", "E_EXPR_STRING_UNTERMINATED", startColumn);
+      this.fail(
+        "unterminated string literal",
+        "E_EXPR_STRING_UNTERMINATED",
+        startColumn,
+      );
       return null;
     }
 
@@ -306,12 +332,20 @@ class ExpressionParser {
 
     const closing = this.peek();
     if (closing === undefined) {
-      this.fail("unterminated string literal", "E_EXPR_STRING_UNTERMINATED", startColumn);
+      this.fail(
+        "unterminated string literal",
+        "E_EXPR_STRING_UNTERMINATED",
+        startColumn,
+      );
       return null;
     }
 
     if (closing !== quote) {
-      this.fail("expression string literal must contain exactly one character", "E_EXPR_STRING_LENGTH", startColumn);
+      this.fail(
+        "expression string literal must contain exactly one character",
+        "E_EXPR_STRING_LENGTH",
+        startColumn,
+      );
       return null;
     }
 
@@ -321,7 +355,11 @@ class ExpressionParser {
 
   private parseEscapedCharacter(startColumn: number): number | null {
     if (this.position >= this.input.length) {
-      this.fail("invalid escape in string literal", "E_EXPR_STRING_ESCAPE", startColumn);
+      this.fail(
+        "invalid escape in string literal",
+        "E_EXPR_STRING_ESCAPE",
+        startColumn,
+      );
       return null;
     }
 
@@ -340,7 +378,7 @@ class ExpressionParser {
     if (escaped === "\\") {
       return 0x5c;
     }
-    if (escaped === "\"") {
+    if (escaped === '"') {
       return 0x22;
     }
     if (escaped === "'") {
@@ -354,11 +392,19 @@ class ExpressionParser {
         return Number.parseInt(hex, 16);
       }
 
-      this.fail("invalid \\xHH escape in string literal", "E_EXPR_STRING_ESCAPE", startColumn);
+      this.fail(
+        "invalid \\xHH escape in string literal",
+        "E_EXPR_STRING_ESCAPE",
+        startColumn,
+      );
       return null;
     }
 
-    this.fail("invalid escape in string literal", "E_EXPR_STRING_ESCAPE", startColumn);
+    this.fail(
+      "invalid escape in string literal",
+      "E_EXPR_STRING_ESCAPE",
+      startColumn,
+    );
     return null;
   }
 
@@ -416,7 +462,10 @@ class ExpressionParser {
   }
 
   private skipWhitespace(): void {
-    while (this.position < this.input.length && /\s/.test(this.input[this.position]!)) {
+    while (
+      this.position < this.input.length &&
+      /\s/.test(this.input[this.position]!)
+    ) {
       this.position += 1;
     }
   }
