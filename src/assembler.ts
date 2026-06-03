@@ -610,7 +610,14 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
     if (mnemonic === ".BYTE") {
       const emitted = line.operands.map((expr) => (evaluateScopedExpression(expr, symbols, location, scope) ?? 0) & 0xff);
       writeBytes(bytes, location, emitted);
-      listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
+      const listingLine: ListingLine = { address: location & 0xffff, bytes: emitted, source: line.raw,
+        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        ...(pendingPageBreak ? { pageBreak: true } : {}) };
+      pendingTitle = undefined;
+      pendingSubtitle = undefined;
+      pendingPageBreak = false;
+      listing.push(listingLine);
       if (emitted.length > 0) {
         minAddress = Math.min(minAddress, location);
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
@@ -631,7 +638,14 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
         emitted.push((evaluateScopedExpression(operand, symbols, location, scope) ?? 0) & 0xff);
       }
       writeBytes(bytes, location, emitted);
-      listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
+      const listingLine: ListingLine = { address: location & 0xffff, bytes: emitted, source: line.raw,
+        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        ...(pendingPageBreak ? { pageBreak: true } : {}) };
+      pendingTitle = undefined;
+      pendingSubtitle = undefined;
+      pendingPageBreak = false;
+      listing.push(listingLine);
       if (emitted.length > 0) {
         minAddress = Math.min(minAddress, location);
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
@@ -647,7 +661,14 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
         emitted.push(value & 0xff, (value >> 8) & 0xff);
       }
       writeBytes(bytes, location, emitted);
-      listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
+      const listingLine: ListingLine = { address: location & 0xffff, bytes: emitted, source: line.raw,
+        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        ...(pendingPageBreak ? { pageBreak: true } : {}) };
+      pendingTitle = undefined;
+      pendingSubtitle = undefined;
+      pendingPageBreak = false;
+      listing.push(listingLine);
       if (emitted.length > 0) {
         minAddress = Math.min(minAddress, location);
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
@@ -661,7 +682,14 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
       const value = (evaluateScopedExpression(line.operands[1] ?? "0", symbols, location, scope) ?? 0) & 0xff;
       const emitted = new Array<number>(count).fill(value);
       writeBytes(bytes, location, emitted);
-      listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
+      const listingLine: ListingLine = { address: location & 0xffff, bytes: emitted, source: line.raw,
+        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        ...(pendingPageBreak ? { pageBreak: true } : {}) };
+      pendingTitle = undefined;
+      pendingSubtitle = undefined;
+      pendingPageBreak = false;
+      listing.push(listingLine);
       if (emitted.length > 0) {
         minAddress = Math.min(minAddress, location);
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
@@ -675,7 +703,14 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
       const fillValue = (evaluateScopedExpression(line.operands[1] ?? "0", symbols, location, scope) ?? 0) & 0xff;
       const emitted = new Array<number>(alignPadding(location, boundary)).fill(fillValue);
       writeBytes(bytes, location, emitted);
-      listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
+      const listingLine: ListingLine = { address: location & 0xffff, bytes: emitted, source: line.raw,
+        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        ...(pendingPageBreak ? { pageBreak: true } : {}) };
+      pendingTitle = undefined;
+      pendingSubtitle = undefined;
+      pendingPageBreak = false;
+      listing.push(listingLine);
       if (emitted.length > 0) {
         minAddress = Math.min(minAddress, location);
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
@@ -685,34 +720,38 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
     }
 
     if (isListingDirective(mnemonic)) {
+      // Metadata directives don't produce any listing output
       if (mnemonic === ".PAGESIZE") {
         const pageExpr = line.operands[0];
         if (pageExpr !== undefined) {
           const pageSize = evaluateScopedExpression(pageExpr, symbols, location, scope) ?? 0;
           config.pageSize = pageSize & 0xffff;
         }
-        listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
       } else if (mnemonic === ".BYTESPERLINE") {
         const byteExpr = line.operands[0];
         if (byteExpr !== undefined) {
           const bytesPerLine = evaluateScopedExpression(byteExpr, symbols, location, scope) ?? 16;
           config.bytesPerLine = Math.max(1, bytesPerLine & 0xff);
         }
-        listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
       } else if (mnemonic === ".TITLE") {
         const titleExpr = line.operands.join(" ");
         pendingTitle = titleExpr.replace(/^"|"$/g, ""); // Strip quotes if present
-        listing.push({ address: location & 0xffff, bytes: [], source: line.raw, title: pendingTitle });
+        // Mark the next content line with this title
+        if (pendingTitle) {
+          // Title will be applied to the next content line
+        }
       } else if (mnemonic === ".SUBTTL") {
         const subExpr = line.operands.join(" ");
         pendingSubtitle = subExpr.replace(/^"|"$/g, ""); // Strip quotes if present
-        listing.push({ address: location & 0xffff, bytes: [], source: line.raw, subtitle: pendingSubtitle });
+        // Mark the next content line with this subtitle
+        if (pendingSubtitle) {
+          // Subtitle will be applied to the next content line
+        }
       } else if (mnemonic === ".PAGE" || mnemonic === ".EJECT") {
         pendingPageBreak = true;
-        listing.push({ address: location & 0xffff, bytes: [], source: line.raw, pageBreak: true });
-      } else {
-        listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
+        // Page break will be applied to the next content line
       }
+      // .LIST and .NOLIST are recognized but don't do anything yet
       continue;
     }
 
@@ -731,7 +770,14 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
 
     const emitted = encodeInstruction(opcode, resolved, location);
     writeBytes(bytes, location, emitted);
-    listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
+    const listingLine: ListingLine = { address: location & 0xffff, bytes: emitted, source: line.raw,
+      ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+      ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+      ...(pendingPageBreak ? { pageBreak: true } : {}) };
+    pendingTitle = undefined;
+    pendingSubtitle = undefined;
+    pendingPageBreak = false;
+    listing.push(listingLine);
     minAddress = Math.min(minAddress, location);
     maxAddress = Math.max(maxAddress, location + emitted.length - 1);
     location += emitted.length;
