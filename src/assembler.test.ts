@@ -438,15 +438,8 @@ test("listing metadata directives produce visible effects in output", async () =
   assert.ok(diskListing.includes("Test Program"), "First page should have title");
   assert.ok(diskListing.includes("Version 1.0"), "First page should have subtitle");
 
-  // Verify page break (blank line) appears between pages
-  const lines = diskListing.split("\n");
-  let blankLineCount = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i]!.trim() === "") {
-      blankLineCount++;
-    }
-  }
-  assert.ok(blankLineCount > 0, "Listing should have blank lines for page breaks");
+  // Verify page break (form feed character) appears between pages
+  assert.ok(diskListing.includes("\f"), "Listing should have form feed characters for page breaks");
 
   // Verify second page title appears
   assert.ok(diskListing.includes("Second Page"), "Second page should have new title");

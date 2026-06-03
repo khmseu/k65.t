@@ -72,8 +72,8 @@ export function formatListing(lines: readonly ListingLine[], options: ListingFor
       const forcePageBreak = line.pageBreak ?? false;
       
       if (forcePageBreak && currentPageLineCount > 0) {
-        // Force a page break - insert blank line separator
-        formattedLines.push("");
+        // Force a page break - insert form feed character
+        formattedLines.push("\f");
         currentPageLineCount = 0;
         hasContentOnCurrentPage = false;
         pageNumber += 1;
@@ -81,7 +81,7 @@ export function formatListing(lines: readonly ListingLine[], options: ListingFor
       
       // Check if we need automatic page break due to page size
       if (pageSize > 0 && currentPageLineCount >= pageSize) {
-        formattedLines.push(""); // Blank line for page separation
+        formattedLines.push("\f"); // Form feed for page separation
         currentPageLineCount = 0;
         hasContentOnCurrentPage = false;
         pageNumber += 1;
