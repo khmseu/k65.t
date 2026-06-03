@@ -61,22 +61,116 @@ function parseLine(raw: string, lineNumber: number): SourceLine {
 }
 
 function splitComment(raw: string): [string, string | undefined] {
-  const commentIndex = raw.indexOf(";");
-  if (commentIndex < 0) {
-    return [raw, undefined];
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i]!;
+
+    if (quote !== undefined) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+
+      if (ch === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+
+    if (ch === ";") {
+      const codePart = raw.slice(0, i);
+      const commentPart = raw.slice(i + 1).trim();
+      return [codePart, commentPart.length > 0 ? commentPart : undefined];
+    }
   }
 
-  const codePart = raw.slice(0, commentIndex);
-  const commentPart = raw.slice(commentIndex + 1).trim();
-  return [codePart, commentPart.length > 0 ? commentPart : undefined];
+  return [raw, undefined];
 }
 
 function collectOperands(tokens: string[]): string[] {
-  return tokens
-    .join(" ")
-    .split(",")
-    .map((token) => token.trim())
-    .filter(Boolean);
+  const text = tokens.join(" ");
+  if (text.trim().length === 0) {
+    return [];
+  }
+
+  const operands: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+  let parenDepth = 0;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+
+    if (quote !== undefined) {
+      current += ch;
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+
+      if (ch === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+
+    if (ch === "(") {
+      parenDepth += 1;
+      current += ch;
+      continue;
+    }
+
+    if (ch === ")") {
+      if (parenDepth > 0) {
+        parenDepth -= 1;
+      }
+      current += ch;
+      continue;
+    }
+
+    if (ch === "," && parenDepth === 0) {
+      const operand = current.trim();
+      if (operand.length > 0) {
+        operands.push(operand);
+      }
+      current = "";
+      continue;
+    }
+
+    current += ch;
+  }
+
+  const tail = current.trim();
+  if (tail.length > 0) {
+    operands.push(tail);
+  }
+
+  return operands;
 }
 
 function isLikelyLabel(token: string): boolean {

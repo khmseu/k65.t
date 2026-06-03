@@ -225,4 +225,4 @@ Example:
 - Reassignable labels use `.set` or `=` and are resolved sequentially, so each reassignment only affects later lines.
 - Pure comment lines may start with `;` or `*`.
 - Blank lines are accepted.
-- Expressions currently support numeric literals, symbols, `*` for current location, single-character string literals (`'A'`, `"\n"`, `'\x41'`), parentheses, unary `+`, unary `-`, `~`, arithmetic `+ - * / %`, and bitwise `& ^ |`.
+- Expressions currently support numeric literals, symbols, `*` for current location, single-character string literals (`'A'`, `"\n"`, `'\x41'`), parentheses, unary `+`, unary `-`, unary `~`, unary `<` (low byte), unary `>` (high byte), arithmetic `+ - * / %`, and bitwise `& ^ |`.

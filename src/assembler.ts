@@ -709,6 +709,9 @@ function resolveMode(
   }
 
   if (operand.length === 0) {
+    if (table.implied === undefined && table.accumulator !== undefined) {
+      return { mode: "accumulator", value: null };
+    }
     return { mode: "implied", value: null };
   }
 

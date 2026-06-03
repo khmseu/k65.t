@@ -121,6 +121,49 @@ test("assemble accepts label-only lines as zero-size anchors", () => {
   assert.equal(symbolMap.get("NEXT"), 0x8831);
 });
 
+test("assemble allows accumulator instructions without explicit A operand", () => {
+  const source = [
+    ".org $8840",
+    "      asl",
+    "      lsr",
+    "      rol",
+    "      ror",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0x0a, 0x4a, 0x2a, 0x6a]);
+});
+
+test("assemble supports unary < and > byte selectors in expressions", () => {
+  const source = [
+    ".org $8850",
+    "pointer .equ $1234",
+    "      lda #<pointer",
+    "      ldy #>pointer",
+    "      .byte <($BEEF), >($BEEF)",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0xa9, 0x34, 0xa0, 0x12, 0xef, 0xbe]);
+});
+
+test("assemble preserves semicolons and commas inside quoted string expressions", () => {
+  const source = [
+    ".org $8860",
+    "      cmp #(\";\"&%01111111)+1 ; this is a real comment",
+    "      cmp #(\",\"&%01111111)",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0xc9, 0x3c, 0xc9, 0x2c]);
+});
+
 test("assemble resolves cheap labels within the nearest non-cheap label scope", () => {
   const source = [
     ".org $8C00",
