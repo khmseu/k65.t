@@ -92,6 +92,18 @@ export function formatListing(
       currentPageLineCount = 0;
       hasContentOnCurrentPage = false;
       pageNumber += 1;
+
+      // Insert page headers right after the form feed (before the directive)
+      if (currentTitle !== undefined || currentSubtitle !== undefined) {
+        if (currentTitle !== undefined) {
+          formattedLines.push(currentTitle);
+        }
+        if (currentSubtitle !== undefined) {
+          formattedLines.push(currentSubtitle);
+        }
+        formattedLines.push(""); // Blank line after header
+        hasContentOnCurrentPage = true;
+      }
     }
 
     if (isContentLine) {
@@ -101,25 +113,32 @@ export function formatListing(
         currentPageLineCount = 0;
         hasContentOnCurrentPage = false;
         pageNumber += 1;
+
+        // Insert page headers right after the form feed
+        if (currentTitle !== undefined || currentSubtitle !== undefined) {
+          if (currentTitle !== undefined) {
+            formattedLines.push(currentTitle);
+          }
+          if (currentSubtitle !== undefined) {
+            formattedLines.push(currentSubtitle);
+          }
+          formattedLines.push(""); // Blank line after header
+          hasContentOnCurrentPage = true;
+        }
       }
 
-      // Insert page headers on first content or after page break (regardless of pageSize)
+      // Insert page headers at start of page if not already done (for non-paged content)
       if (
         !hasContentOnCurrentPage &&
         (currentTitle !== undefined || currentSubtitle !== undefined)
       ) {
-        let haveHeader = false;
         if (currentTitle !== undefined) {
           formattedLines.push(currentTitle);
-          haveHeader = true;
         }
         if (currentSubtitle !== undefined) {
           formattedLines.push(currentSubtitle);
-          haveHeader = true;
         }
-        if (haveHeader) {
-          formattedLines.push(""); // Blank line after header
-        }
+        formattedLines.push(""); // Blank line after header
         hasContentOnCurrentPage = true;
       }
     }
