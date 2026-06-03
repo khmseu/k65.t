@@ -10,6 +10,7 @@
 - Accept optional labels, optional trailing colons, comma-separated operands, inline semicolon comments, pure comment lines starting with `;` or `*`, and blank lines.
 - Expand simple macros defined with `.macro name, arg1, arg2` and terminated by `.endmacro`, using `\arg1`-style substitution inside the macro body.
 - Support data directives including `.byte`, `.word`, `.text`, and `.fill`.
+- Support `.include "relative/path.asm"` for source composition.
 
 ## Recommended VS Code extensions
 

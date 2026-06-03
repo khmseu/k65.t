@@ -1,7 +1,7 @@
 import { parseSource } from "./parser.js";
 import { evaluateExpression, evaluateExpressionDetailed } from "./expressions.js";
 import { branchMnemonics, modeSize, opcodes, type AddressingMode } from "./opcodes.js";
-import { preprocessSource } from "./preprocessor.js";
+import { PreprocessError, preprocessSource } from "./preprocessor.js";
 import type { AssemblyDiagnostic, AssemblyResult, ListingLine, SourceLine, SymbolEntry } from "./types.js";
 
 const MAX_PASSES = 10;
@@ -23,8 +23,30 @@ interface PassState {
   readonly endAddress: number;
 }
 
-export function assemble(sourceText: string): AssemblyResult {
-  const parsed = parseSource(preprocessSource(sourceText));
+export interface AssembleOptions {
+  readonly sourcePath?: string;
+  readonly readFile?: (filePath: string) => string;
+}
+
+export function assemble(sourceText: string, options: AssembleOptions = {}): AssemblyResult {
+  let preprocessed: string;
+  try {
+    preprocessed = preprocessSource(sourceText, {
+      ...(options.sourcePath !== undefined ? { sourcePath: options.sourcePath } : {}),
+      ...(options.readFile !== undefined ? { readFile: options.readFile } : {}),
+    });
+  } catch (error) {
+    const diagnostic = mapPreprocessError(error);
+    return {
+      binary: new Uint8Array(),
+      listing: [],
+      symbols: [],
+      startAddress: 0,
+      diagnostics: [diagnostic],
+    };
+  }
+
+  const parsed = parseSource(preprocessed);
 
   const sized = runSizingPasses(parsed);
   const diagnostics = collectDiagnostics(parsed, sized);
@@ -39,6 +61,24 @@ export function assemble(sourceText: string): AssemblyResult {
     symbols,
     startAddress: sized.startAddress,
     diagnostics,
+  };
+}
+
+function mapPreprocessError(error: unknown): AssemblyDiagnostic {
+  if (error instanceof PreprocessError) {
+    return {
+      code: error.code,
+      lineNumber: error.lineNumber > 0 ? error.lineNumber : 1,
+      message: error.message,
+      source: error.source,
+    };
+  }
+
+  return {
+    code: "E_PREPROCESS",
+    lineNumber: 1,
+    message: error instanceof Error ? error.message : "Preprocessing failed",
+    source: "",
   };
 }
 

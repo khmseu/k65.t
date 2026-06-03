@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parseSource } from "./parser.js";
 
 const MAX_EXPANSION_DEPTH = 25;
+const MAX_INCLUDE_DEPTH = 32;
 
 interface MacroDefinition {
   readonly name: string;
@@ -8,9 +11,56 @@ interface MacroDefinition {
   readonly body: readonly string[];
 }
 
-export function preprocessSource(text: string): string {
-  const lines = text.split(/\r?\n/);
+export interface PreprocessOptions {
+  readonly sourcePath?: string;
+  readonly currentDir?: string;
+  readonly readFile?: (filePath: string) => string;
+}
+
+export class PreprocessError extends Error {
+  readonly code: string;
+  readonly lineNumber: number;
+  readonly source: string;
+
+  constructor(code: string, message: string, lineNumber: number, source: string) {
+    super(message);
+    this.name = "PreprocessError";
+    this.code = code;
+    this.lineNumber = lineNumber;
+    this.source = source;
+  }
+}
+
+export function preprocessSource(text: string, options: PreprocessOptions = {}): string {
+  const sourcePath = options.sourcePath;
+  const currentDir = options.currentDir ?? (sourcePath === undefined ? process.cwd() : dirname(sourcePath));
+  const readFile = options.readFile ?? ((filePath: string) => readFileSync(filePath, "utf8"));
   const macros = new Map<string, MacroDefinition>();
+
+  const output = preprocessLines(
+    text.split(/\r?\n/),
+    {
+      currentDir,
+      ...(sourcePath !== undefined ? { sourcePath } : {}),
+      includeStack: sourcePath === undefined ? [] : [resolve(sourcePath)],
+      readFile,
+      includeDepth: 0,
+    },
+    macros,
+  );
+
+  return output.join("\n");
+}
+
+interface IncludeContext {
+  readonly currentDir: string;
+  readonly sourcePath?: string;
+  readonly includeStack: readonly string[];
+  readonly readFile: (filePath: string) => string;
+  readonly includeDepth: number;
+}
+
+function preprocessLines(lines: readonly string[], context: IncludeContext, macros: Map<string, MacroDefinition>): string[] {
   const output: string[] = [];
 
   for (let i = 0; i < lines.length; i += 1) {
@@ -18,10 +68,52 @@ export function preprocessSource(text: string): string {
     const parsed = parseSource(line)[0]!;
     const mnemonic = parsed.mnemonic?.toUpperCase();
 
+    if (parsed.kind === "code" && mnemonic === ".INCLUDE") {
+      const includeOperand = parsed.operands[0];
+      if (includeOperand === undefined) {
+        throw new PreprocessError("E_INCLUDE_OPERAND", ".include requires a quoted file path", parsed.lineNumber, parsed.raw);
+      }
+
+      const includePath = parseIncludePath(includeOperand);
+      if (includePath === null) {
+        throw new PreprocessError("E_INCLUDE_PATH", `.include path must be a quoted string: ${includeOperand}`, parsed.lineNumber, parsed.raw);
+      }
+
+      if (context.includeDepth >= MAX_INCLUDE_DEPTH) {
+        throw new PreprocessError("E_INCLUDE_DEPTH", "Maximum include depth exceeded", parsed.lineNumber, parsed.raw);
+      }
+
+      const resolvedPath = isAbsolute(includePath) ? resolve(includePath) : resolve(join(context.currentDir, includePath));
+      if (context.includeStack.includes(resolvedPath)) {
+        throw new PreprocessError("E_INCLUDE_CYCLE", `Circular include detected for ${resolvedPath}`, parsed.lineNumber, parsed.raw);
+      }
+
+      let includedText: string;
+      try {
+        includedText = context.readFile(resolvedPath);
+      } catch {
+        throw new PreprocessError("E_INCLUDE_READ", `Unable to read include file: ${resolvedPath}`, parsed.lineNumber, parsed.raw);
+      }
+
+      const includedLines = preprocessLines(
+        includedText.split(/\r?\n/),
+        {
+          currentDir: dirname(resolvedPath),
+          sourcePath: resolvedPath,
+          includeStack: [...context.includeStack, resolvedPath],
+          readFile: context.readFile,
+          includeDepth: context.includeDepth + 1,
+        },
+        macros,
+      );
+      output.push(...includedLines);
+      continue;
+    }
+
     if (parsed.kind === "code" && mnemonic === ".MACRO") {
       const name = parsed.operands[0]?.trim();
       if (!name) {
-        throw new Error(`Missing macro name on line ${parsed.lineNumber}`);
+        throw new PreprocessError("E_MACRO_NAME", `Missing macro name on line ${parsed.lineNumber}`, parsed.lineNumber, parsed.raw);
       }
 
       const body: string[] = [];
@@ -38,7 +130,7 @@ export function preprocessSource(text: string): string {
       }
 
       if (!foundEnd) {
-        throw new Error(`Unterminated macro ${name}`);
+        throw new PreprocessError("E_MACRO_UNTERMINATED", `Unterminated macro ${name}`, parsed.lineNumber, parsed.raw);
       }
 
       macros.set(name.toUpperCase(), {
@@ -52,12 +144,12 @@ export function preprocessSource(text: string): string {
     output.push(...expandLine(line, macros, 0));
   }
 
-  return output.join("\n");
+  return output;
 }
 
 function expandLine(line: string, macros: ReadonlyMap<string, MacroDefinition>, depth: number): string[] {
   if (depth > MAX_EXPANSION_DEPTH) {
-    throw new Error("Macro expansion depth exceeded");
+    throw new PreprocessError("E_MACRO_DEPTH", "Macro expansion depth exceeded", 0, line);
   }
 
   const parsed = parseSource(line)[0]!;
@@ -112,4 +204,18 @@ function attachLabel(label: string, line: string): string {
   }
 
   return `${label} ${trimmed}`;
+}
+
+function parseIncludePath(operand: string): string | null {
+  const trimmed = operand.trim();
+  if (trimmed.length < 2) {
+    return null;
+  }
+
+  const quote = trimmed[0];
+  if ((quote !== "\"" && quote !== "'") || trimmed[trimmed.length - 1] !== quote) {
+    return null;
+  }
+
+  return trimmed.slice(1, -1);
 }

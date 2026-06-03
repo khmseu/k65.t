@@ -10,7 +10,7 @@ async function main(): Promise<void> {
   }
 
   const source = await readFile(inputPath, "utf8");
-  const result = assemble(source);
+  const result = assemble(source, { sourcePath: inputPath });
 
   if (result.diagnostics.length > 0) {
     for (const diagnostic of result.diagnostics) {

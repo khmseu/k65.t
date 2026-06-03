@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { assemble } from "./assembler.js";
 import { formatListing } from "./listing.js";
 
@@ -129,4 +132,33 @@ test("assemble reports invalid .text literals", () => {
   assert.equal(result.diagnostics.length, 1);
   assert.equal(result.diagnostics[0]?.code, "E_DIR_TEXT_LITERAL");
   assert.ok(result.diagnostics[0]?.message.includes("Invalid string literal"));
+});
+
+test("assemble resolves .include files relative to source path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "k65t-include-"));
+  const mainPath = join(root, "main.asm");
+  const partPath = join(root, "part.asm");
+
+  await writeFile(mainPath, [".org $8500", ".include \"part.asm\""].join("\n"), "utf8");
+  await writeFile(partPath, ["start lda #$11", "      .byte $22"].join("\n"), "utf8");
+
+  const mainSource = ".org $8500\n.include \"part.asm\"";
+  const result = assemble(mainSource, { sourcePath: mainPath });
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0xa9, 0x11, 0x22]);
+  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8500);
+});
+
+test("assemble reports include read failures as diagnostics", () => {
+  const source = [
+    ".org $8600",
+    ".include \"missing-file.asm\"",
+  ].join("\n");
+
+  const result = assemble(source, { sourcePath: "/tmp/k65t/main.asm" });
+
+  assert.equal(result.binary.length, 0);
+  assert.equal(result.diagnostics.length, 1);
+  assert.equal(result.diagnostics[0]?.code, "E_INCLUDE_READ");
 });
