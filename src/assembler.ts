@@ -391,6 +391,11 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
       continue;
     }
 
+    if (isListingDirective(mnemonic)) {
+      // Listing directives don't affect assembly, just metadata
+      continue;
+    }
+
     const opcodeTable = opcodes[mnemonic];
     if (opcodeTable === undefined) {
       diagnostics.push(makeDiagnostic(line, "E_OPCODE_UNKNOWN", `Unknown mnemonic: ${mnemonic}`));
@@ -540,6 +545,10 @@ function sizeLine(
     return { size: padding, nextAddress: location + padding };
   }
 
+  if (isListingDirective(mnemonic)) {
+    return { size: 0, nextAddress: location };
+  }
+
   const table = opcodes[mnemonic];
   if (table === undefined) {
     return { size: 0, nextAddress: location };
@@ -657,6 +666,11 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
       }
       location += emitted.length;
+      continue;
+    }
+
+    if (isListingDirective(mnemonic)) {
+      listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
       continue;
     }
 
@@ -783,6 +797,10 @@ function normalizeMnemonic(mnemonic: string | undefined): string | undefined {
 
 function isAssignmentDirective(mnemonic: string | undefined): boolean {
   return mnemonic === ".EQU" || mnemonic === ".SET" || mnemonic === "=";
+}
+
+function isListingDirective(mnemonic: string | undefined): boolean {
+  return mnemonic === ".LIST" || mnemonic === ".NOLIST" || mnemonic === ".PAGE" || mnemonic === ".EJECT" || mnemonic === ".TITLE" || mnemonic === ".SUBTTL";
 }
 
 function assignmentDirectiveName(mnemonic: string): string {

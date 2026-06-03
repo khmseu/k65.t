@@ -217,6 +217,60 @@ Example:
 .endif
 ```
 
+## Listing control directives
+
+Listing control directives do not emit any code bytes; they control the formatting of the listing output.
+
+### `.list`
+
+Enables listing output for subsequent lines. This is the default state.
+
+Example:
+
+```asm
+.nolist
+	.byte $00, $00, $00	; Not included in listing
+.list
+	lda #$01		; Included in listing
+```
+
+### `.nolist`
+
+Disables listing output for subsequent lines. Source is suppressed in the listing until a `.list` directive is encountered.
+
+### `.page` / `.eject`
+
+Marks a page break point in the listing. Tools that process the listing can use this to insert page headers/footers or split long listings.
+
+Example:
+
+```asm
+	ldy #$00
+.page
+	ldx #$00
+```
+
+### `.title text`
+
+Sets the page title for listing output. This text typically appears in page headers when listings are printed or formatted.
+
+Example:
+
+```asm
+.title "6502 Monitor ROM"
+```
+
+### `.subttl text`
+
+Sets the page subtitle for listing output. This text typically appears below the title in page headers.
+
+Example:
+
+```asm
+.title "Applesoft BASIC"
+.subttl "Main Entry Point"
+```
+
 ## Source format notes
 
 - A line may contain an optional label, an opcode or directive, comma-separated operands, and an optional semicolon comment.
