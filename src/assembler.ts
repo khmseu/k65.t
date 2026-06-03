@@ -188,6 +188,34 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
       continue;
     }
 
+    if (mnemonic === ".TEXT") {
+      for (const operand of line.operands) {
+        const literal = parseTextLiteral(operand);
+        if (literal.kind === "invalid") {
+          diagnostics.push(makeDiagnostic(line, "E_DIR_TEXT_LITERAL", literal.message));
+          continue;
+        }
+
+        if (literal.kind === "bytes") {
+          continue;
+        }
+
+        const evaluation = evaluateExpressionDetailed(operand, passState.symbols, location);
+        if (evaluation.value === null) {
+          diagnostics.push(
+            makeDiagnostic(
+              line,
+              evaluation.errorCode ?? "E_EXPR_INVALID",
+              `text expression error (${operand}): ${evaluation.error ?? "invalid expression"}`,
+              evaluation.errorColumn ?? undefined,
+            ),
+          );
+        }
+      }
+      location += textDirectiveSize(line.operands);
+      continue;
+    }
+
     if (mnemonic === ".WORD") {
       line.operands.forEach((expression) => {
         const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
@@ -203,6 +231,46 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
         }
       });
       location += line.operands.length * 2;
+      continue;
+    }
+
+    if (mnemonic === ".FILL") {
+      const countExpr = line.operands[0];
+      if (countExpr === undefined) {
+        diagnostics.push(makeDiagnostic(line, "E_DIR_FILL_COUNT", ".fill requires a count operand"));
+        continue;
+      }
+
+      const countEval = evaluateExpressionDetailed(countExpr, passState.symbols, location);
+      if (countEval.value === null) {
+        diagnostics.push(
+          makeDiagnostic(
+            line,
+            countEval.errorCode ?? "E_EXPR_INVALID",
+            `.fill count expression error (${countExpr}): ${countEval.error ?? "invalid expression"}`,
+            countEval.errorColumn ?? undefined,
+          ),
+        );
+      } else if (countEval.value < 0 || countEval.value > 0xffff) {
+        diagnostics.push(makeDiagnostic(line, "E_DIR_FILL_RANGE", ".fill count must be in the range 0..65535"));
+      }
+
+      const valueExpr = line.operands[1];
+      if (valueExpr !== undefined) {
+        const valueEval = evaluateExpressionDetailed(valueExpr, passState.symbols, location);
+        if (valueEval.value === null) {
+          diagnostics.push(
+            makeDiagnostic(
+              line,
+              valueEval.errorCode ?? "E_EXPR_INVALID",
+              `.fill value expression error (${valueExpr}): ${valueEval.error ?? "invalid expression"}`,
+              valueEval.errorColumn ?? undefined,
+            ),
+          );
+        }
+      }
+
+      location += (countEval.value ?? 0) & 0xffff;
       continue;
     }
 
@@ -324,8 +392,20 @@ function sizeLine(line: SourceLine, location: number, symbols: ReadonlyMap<strin
     return { size: line.operands.length, nextAddress: location + line.operands.length };
   }
 
+  if (mnemonic === ".TEXT") {
+    const size = textDirectiveSize(line.operands);
+    return { size, nextAddress: location + size };
+  }
+
   if (mnemonic === ".WORD") {
     const size = line.operands.length * 2;
+    return { size, nextAddress: location + size };
+  }
+
+  if (mnemonic === ".FILL") {
+    const countExpr = line.operands[0];
+    const count = countExpr === undefined ? 0 : evaluateExpression(countExpr, symbols, location);
+    const size = (count ?? 0) & 0xffff;
     return { size, nextAddress: location + size };
   }
 
@@ -382,12 +462,47 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
       continue;
     }
 
+    if (mnemonic === ".TEXT") {
+      const emitted: number[] = [];
+      for (const operand of line.operands) {
+        const literal = parseTextLiteral(operand);
+        if (literal.kind === "bytes") {
+          emitted.push(...literal.bytes);
+          continue;
+        }
+
+        emitted.push((evaluateExpression(operand, passState.symbols, location) ?? 0) & 0xff);
+      }
+      writeBytes(bytes, location, emitted);
+      listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
+      if (emitted.length > 0) {
+        minAddress = Math.min(minAddress, location);
+        maxAddress = Math.max(maxAddress, location + emitted.length - 1);
+      }
+      location += emitted.length;
+      continue;
+    }
+
     if (mnemonic === ".WORD") {
       const emitted: number[] = [];
       for (const expr of line.operands) {
         const value = (evaluateExpression(expr, passState.symbols, location) ?? 0) & 0xffff;
         emitted.push(value & 0xff, (value >> 8) & 0xff);
       }
+      writeBytes(bytes, location, emitted);
+      listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
+      if (emitted.length > 0) {
+        minAddress = Math.min(minAddress, location);
+        maxAddress = Math.max(maxAddress, location + emitted.length - 1);
+      }
+      location += emitted.length;
+      continue;
+    }
+
+    if (mnemonic === ".FILL") {
+      const count = (evaluateExpression(line.operands[0] ?? "0", passState.symbols, location) ?? 0) & 0xffff;
+      const value = (evaluateExpression(line.operands[1] ?? "0", passState.symbols, location) ?? 0) & 0xff;
+      const emitted = new Array<number>(count).fill(value);
       writeBytes(bytes, location, emitted);
       listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
       if (emitted.length > 0) {
@@ -558,6 +673,86 @@ function makeDiagnostic(line: SourceLine, code: string, message: string, column?
     message,
     source: line.raw,
   };
+}
+
+function textDirectiveSize(operands: readonly string[]): number {
+  let size = 0;
+
+  for (const operand of operands) {
+    const literal = parseTextLiteral(operand);
+    size += literal.kind === "bytes" ? literal.bytes.length : 1;
+  }
+
+  return size;
+}
+
+function parseTextLiteral(operand: string):
+  | { kind: "bytes"; bytes: number[] }
+  | { kind: "not-literal" }
+  | { kind: "invalid"; message: string } {
+  const trimmed = operand.trim();
+  if (trimmed.length < 2) {
+    return { kind: "not-literal" };
+  }
+
+  const quote = trimmed[0];
+  if ((quote !== "\"" && quote !== "'") || trimmed[trimmed.length - 1] !== quote) {
+    if (quote === "\"" || quote === "'") {
+      return { kind: "invalid", message: `Invalid string literal in .text operand: ${operand}` };
+    }
+    return { kind: "not-literal" };
+  }
+
+  const content = trimmed.slice(1, -1);
+  const bytes: number[] = [];
+
+  for (let i = 0; i < content.length; i += 1) {
+    const ch = content[i]!;
+    if (ch !== "\\") {
+      bytes.push(ch.charCodeAt(0) & 0xff);
+      continue;
+    }
+
+    const next = content[i + 1];
+    if (next === undefined) {
+      return { kind: "invalid", message: `Invalid escape in .text operand: ${operand}` };
+    }
+
+    if (next === "n") {
+      bytes.push(0x0a);
+      i += 1;
+      continue;
+    }
+    if (next === "r") {
+      bytes.push(0x0d);
+      i += 1;
+      continue;
+    }
+    if (next === "t") {
+      bytes.push(0x09);
+      i += 1;
+      continue;
+    }
+    if (next === "\\" || next === "\"" || next === "'") {
+      bytes.push(next.charCodeAt(0) & 0xff);
+      i += 1;
+      continue;
+    }
+
+    const hexStart = i + 1;
+    if (next === "x" && hexStart + 2 <= content.length - 1) {
+      const hex = content.slice(i + 2, i + 4);
+      if (/^[0-9a-f]{2}$/i.test(hex)) {
+        bytes.push(Number.parseInt(hex, 16));
+        i += 3;
+        continue;
+      }
+    }
+
+    return { kind: "invalid", message: `Invalid escape in .text operand: ${operand}` };
+  }
+
+  return { kind: "bytes", bytes };
 }
 
 function writeBytes(target: Map<number, number>, address: number, values: readonly number[]): void {

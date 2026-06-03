@@ -102,3 +102,31 @@ test("assemble reports divide-by-zero in expression diagnostics", () => {
   assert.equal(result.diagnostics[0]?.column, 5);
   assert.ok(result.diagnostics[0]?.message.includes("division by zero"));
 });
+
+test("assemble supports .text and .fill directives", () => {
+  const source = [
+    ".org $8300",
+    "start .text \"HI\", 0, '\\n'",
+    "      .fill 3, $2A",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0x48, 0x49, 0x00, 0x0a, 0x2a, 0x2a, 0x2a]);
+  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8300);
+});
+
+test("assemble reports invalid .text literals", () => {
+  const source = [
+    ".org $8400",
+    "start .text \"unterminated",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.binary.length, 0);
+  assert.equal(result.diagnostics.length, 1);
+  assert.equal(result.diagnostics[0]?.code, "E_DIR_TEXT_LITERAL");
+  assert.ok(result.diagnostics[0]?.message.includes("Invalid string literal"));
+});
