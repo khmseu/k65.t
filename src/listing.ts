@@ -11,6 +11,10 @@ export function formatListingLine(
 ): string[] {
   const bytesPerLine = options.bytesPerLine ?? 16;
 
+  // Calculate fixed column positions based on bytesPerLine
+  // Address (4 hex digits) + space + bytes field
+  const maxBytesWidth = bytesPerLine * 3 - 1; // "XX XX XX..." = 3 chars per byte minus 1
+
   // Format the main listing line with bytes split across multiple lines if needed
   const address =
     line.address === null
@@ -21,19 +25,18 @@ export function formatListingLine(
   const lines: string[] = [];
 
   if (line.bytes.length === 0) {
-    // No bytes, just address and source
-    lines.push(address + " " + sourceText);
+    // No bytes, just address and source (pad bytes field to maintain column alignment)
+    const bytesField = " ".repeat(maxBytesWidth); // Empty bytes field padded
+    const line1 = address + " " + bytesField + " " + sourceText;
+    lines.push(line1.trimEnd());
   } else if (line.bytes.length <= bytesPerLine) {
     // All bytes fit on one line
     const byteField = line.bytes
       .map((byte) => byte.toString(16).toUpperCase().padStart(2, "0"))
       .join(" ");
-    // Align source to fixed column (60) for lines with bytes
-    // This ensures the source text starts at consistent position for byte lines
-    const currentWidth = 4 + 1 + byteField.length; // address + space + bytes
-    const targetWidth = 55; // Column where source should start for byte lines
-    const padding = Math.max(1, targetWidth - currentWidth);
-    const line1 = address + " " + byteField + " ".repeat(padding) + sourceText;
+    // Pad bytes field to fixed width
+    const paddedBytes = byteField.padEnd(maxBytesWidth);
+    const line1 = address + " " + paddedBytes + " " + sourceText;
     lines.push(line1.trimEnd());
   } else {
     // Multiple lines needed
@@ -48,14 +51,14 @@ export function formatListingLine(
 
       if (i === 0) {
         // First line has address and source
-        const currentWidth = 4 + 1 + byteField.length;
-        const targetWidth = 55;
-        const padding = Math.max(1, targetWidth - currentWidth);
-        const firstLine = nextAddrStr + " " + byteField + " ".repeat(padding) + sourceText;
+        const paddedBytes = byteField.padEnd(maxBytesWidth);
+        const firstLine = nextAddrStr + " " + paddedBytes + " " + sourceText;
         lines.push(firstLine.trimEnd());
       } else {
-        // Continuation lines have indented bytes only (no source)
-        lines.push(nextAddrStr + " " + byteField);
+        // Continuation lines have indented bytes only, padded to alignment
+        const paddedBytes = byteField.padEnd(maxBytesWidth);
+        const contLine = nextAddrStr + " " + paddedBytes;
+        lines.push(contLine.trimEnd());
       }
     }
   }
