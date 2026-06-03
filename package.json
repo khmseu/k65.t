@@ -1,0 +1,20 @@
+{
+  "name": "k65t",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "6502 multi-pass macro assembler written in TypeScript/Node.js.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "start": "node dist/index.js",
+    "test": "node --test dist/**/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "typescript": "^5.8.3"
+  }
+}
