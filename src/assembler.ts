@@ -591,19 +591,40 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
     const symbols = passState.lineSymbols[index] ?? passState.symbols;
     const scope = passState.lineScopes[index];
     if (mnemonic === undefined) {
-      listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
+      const listingLine: ListingLine = { address: location & 0xffff, bytes: [], source: line.raw,
+        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        ...(pendingPageBreak ? { pageBreak: true } : {}) };
+      pendingTitle = undefined;
+      pendingSubtitle = undefined;
+      pendingPageBreak = false;
+      listing.push(listingLine);
       continue;
     }
 
     if (mnemonic === ".ORG") {
       const target = evaluateScopedExpression(line.operands[0] ?? "0", symbols, location, scope) ?? location;
       location = target & 0xffff;
-      listing.push({ address: location, bytes: [], source: line.raw });
+      const listingLine: ListingLine = { address: location, bytes: [], source: line.raw,
+        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        ...(pendingPageBreak ? { pageBreak: true } : {}) };
+      pendingTitle = undefined;
+      pendingSubtitle = undefined;
+      pendingPageBreak = false;
+      listing.push(listingLine);
       continue;
     }
 
     if (isAssignmentDirective(mnemonic)) {
-      listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
+      const listingLine: ListingLine = { address: location & 0xffff, bytes: [], source: line.raw,
+        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        ...(pendingPageBreak ? { pageBreak: true } : {}) };
+      pendingTitle = undefined;
+      pendingSubtitle = undefined;
+      pendingPageBreak = false;
+      listing.push(listingLine);
       continue;
     }
 
@@ -757,14 +778,28 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
 
     const opcodeTable = opcodes[mnemonic];
     if (opcodeTable === undefined) {
-      listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
+      const listingLine: ListingLine = { address: location & 0xffff, bytes: [], source: line.raw,
+        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        ...(pendingPageBreak ? { pageBreak: true } : {}) };
+      pendingTitle = undefined;
+      pendingSubtitle = undefined;
+      pendingPageBreak = false;
+      listing.push(listingLine);
       continue;
     }
 
     const resolved = resolveMode(mnemonic, line.operands, opcodeTable, symbols, location, false, scope);
     const opcode = opcodeTable[resolved.mode];
     if (opcode === undefined) {
-      listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
+      const listingLine: ListingLine = { address: location & 0xffff, bytes: [], source: line.raw,
+        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        ...(pendingPageBreak ? { pageBreak: true } : {}) };
+      pendingTitle = undefined;
+      pendingSubtitle = undefined;
+      pendingPageBreak = false;
+      listing.push(listingLine);
       continue;
     }
 

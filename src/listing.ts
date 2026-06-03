@@ -49,14 +49,16 @@ export function formatListing(lines: readonly ListingLine[], options: ListingFor
   
   let currentPageLineCount = 0;
   let pageNumber = 1;
+  let hasContentOnCurrentPage = false; // Track if we've output any content yet
   let currentTitle: string | undefined;
   let currentSubtitle: string | undefined;
-  let pageHeaderNeeded = false; // Only insert headers after the first page break
   
   for (const line of lines) {
     // Update title/subtitle if present on this line
     if (line.title !== undefined) {
       currentTitle = line.title;
+      // New title clears old subtitle unless new subtitle is also provided
+      currentSubtitle = undefined;
     }
     if (line.subtitle !== undefined) {
       currentSubtitle = line.subtitle;
@@ -66,15 +68,14 @@ export function formatListing(lines: readonly ListingLine[], options: ListingFor
     const isContentLine = line.address !== null;
     
     if (isContentLine) {
-      // Check if we need to start a new page
+      // Check if this line forces a page break
       const forcePageBreak = line.pageBreak ?? false;
       
-      // Insert page break if this line forces it
       if (forcePageBreak && currentPageLineCount > 0) {
         // Force a page break - insert blank line separator
         formattedLines.push("");
         currentPageLineCount = 0;
-        pageHeaderNeeded = true; // Enable header insertion for next page
+        hasContentOnCurrentPage = false;
         pageNumber += 1;
       }
       
@@ -82,23 +83,23 @@ export function formatListing(lines: readonly ListingLine[], options: ListingFor
       if (pageSize > 0 && currentPageLineCount >= pageSize) {
         formattedLines.push(""); // Blank line for page separation
         currentPageLineCount = 0;
-        pageHeaderNeeded = true; // Enable header insertion for next page
+        hasContentOnCurrentPage = false;
         pageNumber += 1;
       }
       
-      // Insert page header if needed (only after a page break, not on first page)
-      if (pageHeaderNeeded && pageSize > 0) {
+      // Insert page headers on first content or after page break
+      if (!hasContentOnCurrentPage && pageSize > 0) {
         if (currentTitle !== undefined) {
           formattedLines.push(currentTitle);
         }
         if (currentSubtitle !== undefined) {
           formattedLines.push(currentSubtitle);
         }
-        pageHeaderNeeded = false;
+        hasContentOnCurrentPage = true;
       }
     }
     
-    // Format the actual line
+    // Format and output the line
     const formatted = formatListingLine(line, { bytesPerLine });
     formattedLines.push(...formatted);
     
