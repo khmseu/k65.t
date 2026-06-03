@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assemble } from "./assembler.js";
@@ -398,7 +398,11 @@ test("assemble reports unexpected .endif", () => {
   assert.equal(result.diagnostics[0]?.code, "E_IF_UNEXPECTED_END");
 });
 
-test("listing metadata directives produce visible effects in output", () => {
+test("listing metadata directives produce visible effects in output", async () => {
+  const root = await mkdtemp(join(tmpdir(), "k65t-listing-"));
+  const sourcePath = join(root, "test.asm");
+  const listingPath = join(root, "test.lst");
+
   const source = [
     ".title \"Test Program\"",
     ".subttl \"Version 1.0\"",
@@ -414,19 +418,28 @@ test("listing metadata directives produce visible effects in output", () => {
     "lda #$05",
   ].join("\n");
 
-  const result = assemble(source);
+  // Write source file to disk
+  await writeFile(sourcePath, source, "utf8");
+
+  // Assemble the file
+  const result = assemble(source, { sourcePath });
   assert.equal(result.diagnostics.length, 0);
   assert.equal(result.pageSize, 5);
   assert.equal(result.bytesPerLine, 8);
 
-  const listing = formatListing(result.listing, { pageSize: result.pageSize, bytesPerLine: result.bytesPerLine });
+  // Format and write listing to disk
+  const listingText = formatListing(result.listing, { pageSize: result.pageSize, bytesPerLine: result.bytesPerLine });
+  await writeFile(listingPath, listingText, "utf8");
+
+  // Read the listing file from disk
+  const diskListing = await readFile(listingPath, "utf8");
 
   // Verify title and subtitle appear on first page
-  assert.ok(listing.includes("Test Program"), "First page should have title");
-  assert.ok(listing.includes("Version 1.0"), "First page should have subtitle");
+  assert.ok(diskListing.includes("Test Program"), "First page should have title");
+  assert.ok(diskListing.includes("Version 1.0"), "First page should have subtitle");
 
   // Verify page break (blank line) appears between pages
-  const lines = listing.split("\n");
+  const lines = diskListing.split("\n");
   let blankLineCount = 0;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i]!.trim() === "") {
@@ -436,16 +449,16 @@ test("listing metadata directives produce visible effects in output", () => {
   assert.ok(blankLineCount > 0, "Listing should have blank lines for page breaks");
 
   // Verify second page title appears
-  assert.ok(listing.includes("Second Page"), "Second page should have new title");
+  assert.ok(diskListing.includes("Second Page"), "Second page should have new title");
 
   // Verify metadata directives themselves do NOT appear as listing lines
-  assert.equal(!listing.match(/^[0-9A-F]{4}\s+\.title/m), true, ".title directive should not appear in listing");
-  assert.equal(!listing.match(/^[0-9A-F]{4}\s+\.subttl/m), true, ".subttl directive should not appear in listing");
-  assert.equal(!listing.match(/^[0-9A-F]{4}\s+\.pagesize/m), true, ".pagesize directive should not appear in listing");
-  assert.equal(!listing.match(/^[0-9A-F]{4}\s+\.bytesperline/m), true, ".bytesperline directive should not appear in listing");
-  assert.equal(!listing.match(/^[0-9A-F]{4}\s+\.page/m), true, ".page directive should not appear in listing");
+  assert.equal(!diskListing.match(/^[0-9A-F]{4}\s+\.title/m), true, ".title directive should not appear in listing");
+  assert.equal(!diskListing.match(/^[0-9A-F]{4}\s+\.subttl/m), true, ".subttl directive should not appear in listing");
+  assert.equal(!diskListing.match(/^[0-9A-F]{4}\s+\.pagesize/m), true, ".pagesize directive should not appear in listing");
+  assert.equal(!diskListing.match(/^[0-9A-F]{4}\s+\.bytesperline/m), true, ".bytesperline directive should not appear in listing");
+  assert.equal(!diskListing.match(/^[0-9A-F]{4}\s+\.page/m), true, ".page directive should not appear in listing");
 
   // Verify actual code appears
-  assert.ok(listing.includes("lda #$01"), "Code should appear in listing");
-  assert.ok(listing.includes("lda #$04"), "Code after page break should appear in listing");
+  assert.ok(diskListing.includes("lda #$01"), "Code should appear in listing");
+  assert.ok(diskListing.includes("lda #$04"), "Code after page break should appear in listing");
 });
