@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { evaluateExpressionDetailed } from "./expressions.js";
 import { parseSource } from "./parser.js";
 
 const MAX_EXPANSION_DEPTH = 25;
@@ -139,6 +140,65 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
         body,
       });
       continue;
+    }
+
+    if (parsed.kind === "code" && mnemonic === ".REPEAT") {
+      const countOperand = parsed.operands[0];
+      if (countOperand === undefined) {
+        throw new PreprocessError("E_REPEAT_COUNT", ".repeat requires a count operand", parsed.lineNumber, parsed.raw);
+      }
+
+      const repeatEval = evaluateExpressionDetailed(countOperand, new Map(), 0);
+      if (repeatEval.value === null) {
+        throw new PreprocessError(
+          repeatEval.errorCode ?? "E_EXPR_INVALID",
+          `.repeat count expression error (${countOperand}): ${repeatEval.error ?? "invalid expression"}`,
+          parsed.lineNumber,
+          parsed.raw,
+        );
+      }
+
+      const repeatCount = repeatEval.value;
+      if (repeatCount < 0) {
+        throw new PreprocessError("E_REPEAT_RANGE", ".repeat count must be non-negative", parsed.lineNumber, parsed.raw);
+      }
+
+      const block: string[] = [];
+      let foundEnd = false;
+      let nesting = 0;
+
+      for (i += 1; i < lines.length; i += 1) {
+        const bodyLine = lines[i]!;
+        const bodyParsed = parseSource(bodyLine)[0]!;
+        const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
+
+        if (bodyParsed.kind === "code" && bodyMnemonic === ".REPEAT") {
+          nesting += 1;
+        }
+
+        if (bodyParsed.kind === "code" && bodyMnemonic === ".ENDREPEAT") {
+          if (nesting === 0) {
+            foundEnd = true;
+            break;
+          }
+          nesting -= 1;
+        }
+
+        block.push(bodyLine);
+      }
+
+      if (!foundEnd) {
+        throw new PreprocessError("E_REPEAT_UNTERMINATED", "Unterminated .repeat block", parsed.lineNumber, parsed.raw);
+      }
+
+      for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex += 1) {
+        output.push(...preprocessLines(block, context, macros));
+      }
+      continue;
+    }
+
+    if (parsed.kind === "code" && mnemonic === ".ENDREPEAT") {
+      throw new PreprocessError("E_REPEAT_UNEXPECTED_END", "Unexpected .endrepeat", parsed.lineNumber, parsed.raw);
     }
 
     output.push(...expandLine(line, macros, 0));

@@ -190,3 +190,41 @@ test("assemble reports invalid .align boundary", () => {
   assert.equal(result.diagnostics.length, 1);
   assert.equal(result.diagnostics[0]?.code, "E_DIR_ALIGN_RANGE");
 });
+
+test("assemble expands .repeat blocks before assembly", () => {
+  const source = [
+    ".org $8900",
+    ".repeat 3",
+    "  .byte $7F",
+    ".endrepeat",
+    "tail .byte $55",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0x7f, 0x7f, 0x7f, 0x55]);
+  assert.equal(result.symbols.find((entry) => entry.name === "TAIL")?.value, 0x8903);
+});
+
+test("assemble reports unterminated .repeat blocks", () => {
+  const source = [
+    ".org $8A00",
+    ".repeat 2",
+    "  .byte 1",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.binary.length, 0);
+  assert.equal(result.diagnostics.length, 1);
+  assert.equal(result.diagnostics[0]?.code, "E_REPEAT_UNTERMINATED");
+});
+
+test("assemble reports unexpected .endrepeat", () => {
+  const result = assemble(".endrepeat");
+
+  assert.equal(result.binary.length, 0);
+  assert.equal(result.diagnostics.length, 1);
+  assert.equal(result.diagnostics[0]?.code, "E_REPEAT_UNEXPECTED_END");
+});

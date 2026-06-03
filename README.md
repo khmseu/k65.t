@@ -12,6 +12,7 @@
 - Support data directives including `.byte`, `.word`, `.text`, and `.fill`.
 - Support `.include "relative/path.asm"` for source composition.
 - Support `.align boundary[, fill]` for deterministic padding/layout.
+- Support `.repeat count` ... `.endrepeat` blocks for simple counted source expansion.
 
 ## Recommended VS Code extensions
 
