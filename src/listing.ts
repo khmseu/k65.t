@@ -87,8 +87,8 @@ export function formatListing(lines: readonly ListingLine[], options: ListingFor
         pageNumber += 1;
       }
       
-      // Insert page headers on first content or after page break
-      if (!hasContentOnCurrentPage && pageSize > 0) {
+      // Insert page headers on first content or after page break (regardless of pageSize)
+      if (!hasContentOnCurrentPage && (currentTitle !== undefined || currentSubtitle !== undefined)) {
         if (currentTitle !== undefined) {
           formattedLines.push(currentTitle);
         }
