@@ -14,6 +14,9 @@ export interface ListingLine {
   readonly address: number | null;
   readonly bytes: readonly number[];
   readonly source: string;
+  readonly title?: string;
+  readonly subtitle?: string;
+  readonly pageBreak?: boolean;
 }
 
 export interface SymbolEntry {
@@ -35,4 +38,6 @@ export interface AssemblyResult {
   readonly symbols: readonly SymbolEntry[];
   readonly startAddress: number;
   readonly diagnostics: readonly AssemblyDiagnostic[];
+  readonly bytesPerLine: number;
+  readonly pageSize: number;
 }

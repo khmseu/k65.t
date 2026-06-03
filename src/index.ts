@@ -22,7 +22,7 @@ async function main(): Promise<void> {
   const { binPath, lstPath, symPath } = resolveOutputPaths(cli);
 
   await writeFile(binPath, result.binary);
-  await writeFile(lstPath, `${formatListing(result.listing)}\n`);
+  await writeFile(lstPath, `${formatListing(result.listing, { bytesPerLine: result.bytesPerLine, pageSize: result.pageSize })}\n`);
   await writeFile(
     symPath,
     `; ORIGIN ${result.startAddress.toString(16).toUpperCase().padStart(4, "0")}\n${result.symbols

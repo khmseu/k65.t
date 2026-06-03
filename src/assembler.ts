@@ -27,6 +27,13 @@ interface PassState {
   readonly endAddress: number;
 }
 
+interface ListingConfig {
+  pageSize: number; // Lines per page (0 = no paging)
+  bytesPerLine: number; // Bytes to display per output line
+  title?: string;
+  subtitle?: string;
+}
+
 export interface AssembleOptions {
   readonly sourcePath?: string;
   readonly readFile?: (filePath: string) => string;
@@ -47,6 +54,8 @@ export function assemble(sourceText: string, options: AssembleOptions = {}): Ass
       symbols: [],
       startAddress: 0,
       diagnostics: [diagnostic],
+      bytesPerLine: 16,
+      pageSize: 0,
     };
   }
 
@@ -54,7 +63,7 @@ export function assemble(sourceText: string, options: AssembleOptions = {}): Ass
 
   const sized = runSizingPasses(parsed);
   const diagnostics = collectDiagnostics(parsed, sized);
-  const emitted = diagnostics.length === 0 ? emitBinary(parsed, sized) : { binary: new Uint8Array(), listing: buildListingOnly(parsed) };
+  const emitted = diagnostics.length === 0 ? emitBinary(parsed, sized) : { binary: new Uint8Array(), listing: buildListingOnly(parsed), bytesPerLine: 16, pageSize: 0 };
   const symbols: SymbolEntry[] = Array.from(sized.symbols.entries())
     .map(([name, value]) => ({ name: displaySymbolName(name), value }))
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -65,6 +74,8 @@ export function assemble(sourceText: string, options: AssembleOptions = {}): Ass
     symbols,
     startAddress: sized.startAddress,
     diagnostics,
+    bytesPerLine: emitted.bytesPerLine,
+    pageSize: emitted.pageSize,
   };
 }
 
@@ -559,12 +570,16 @@ function sizeLine(
   return { size, nextAddress: location + size };
 }
 
-function emitBinary(lines: readonly SourceLine[], passState: PassState): { binary: Uint8Array; listing: ListingLine[] } {
+function emitBinary(lines: readonly SourceLine[], passState: PassState): { binary: Uint8Array; listing: ListingLine[]; bytesPerLine: number; pageSize: number } {
   const bytes = new Map<number, number>();
   const listing: ListingLine[] = [];
+  const config: ListingConfig = { pageSize: 0, bytesPerLine: 16 };
   let location = passState.startAddress;
   let minAddress = Number.POSITIVE_INFINITY;
   let maxAddress = Number.NEGATIVE_INFINITY;
+  let pendingTitle: string | undefined;
+  let pendingSubtitle: string | undefined;
+  let pendingPageBreak = false;
 
   for (const [index, line] of lines.entries()) {
     if (line.kind !== "code") {
@@ -670,7 +685,34 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
     }
 
     if (isListingDirective(mnemonic)) {
-      listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
+      if (mnemonic === ".PAGESIZE") {
+        const pageExpr = line.operands[0];
+        if (pageExpr !== undefined) {
+          const pageSize = evaluateScopedExpression(pageExpr, symbols, location, scope) ?? 0;
+          config.pageSize = pageSize & 0xffff;
+        }
+        listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
+      } else if (mnemonic === ".BYTESPERLINE") {
+        const byteExpr = line.operands[0];
+        if (byteExpr !== undefined) {
+          const bytesPerLine = evaluateScopedExpression(byteExpr, symbols, location, scope) ?? 16;
+          config.bytesPerLine = Math.max(1, bytesPerLine & 0xff);
+        }
+        listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
+      } else if (mnemonic === ".TITLE") {
+        const titleExpr = line.operands.join(" ");
+        pendingTitle = titleExpr.replace(/^"|"$/g, ""); // Strip quotes if present
+        listing.push({ address: location & 0xffff, bytes: [], source: line.raw, title: pendingTitle });
+      } else if (mnemonic === ".SUBTTL") {
+        const subExpr = line.operands.join(" ");
+        pendingSubtitle = subExpr.replace(/^"|"$/g, ""); // Strip quotes if present
+        listing.push({ address: location & 0xffff, bytes: [], source: line.raw, subtitle: pendingSubtitle });
+      } else if (mnemonic === ".PAGE" || mnemonic === ".EJECT") {
+        pendingPageBreak = true;
+        listing.push({ address: location & 0xffff, bytes: [], source: line.raw, pageBreak: true });
+      } else {
+        listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
+      }
       continue;
     }
 
@@ -696,7 +738,7 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
   }
 
   if (minAddress === Number.POSITIVE_INFINITY || maxAddress === Number.NEGATIVE_INFINITY) {
-    return { binary: new Uint8Array(), listing };
+    return { binary: new Uint8Array(), listing, bytesPerLine: config.bytesPerLine, pageSize: config.pageSize };
   }
 
   const binary = new Uint8Array(maxAddress - minAddress + 1);
@@ -704,7 +746,7 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
     binary[address - minAddress] = value;
   }
 
-  return { binary, listing };
+  return { binary, listing, bytesPerLine: config.bytesPerLine, pageSize: config.pageSize };
 }
 
 function resolveMode(
@@ -800,7 +842,7 @@ function isAssignmentDirective(mnemonic: string | undefined): boolean {
 }
 
 function isListingDirective(mnemonic: string | undefined): boolean {
-  return mnemonic === ".LIST" || mnemonic === ".NOLIST" || mnemonic === ".PAGE" || mnemonic === ".EJECT" || mnemonic === ".TITLE" || mnemonic === ".SUBTTL";
+  return mnemonic === ".LIST" || mnemonic === ".NOLIST" || mnemonic === ".PAGE" || mnemonic === ".EJECT" || mnemonic === ".TITLE" || mnemonic === ".SUBTTL" || mnemonic === ".PAGESIZE" || mnemonic === ".BYTESPERLINE";
 }
 
 function assignmentDirectiveName(mnemonic: string): string {

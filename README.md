@@ -271,6 +271,34 @@ Example:
 .subttl "Main Entry Point"
 ```
 
+### `.pagesize lines`
+
+Sets the number of lines per page in the listing output. This directive tells listing formatters where to insert page breaks. A value of 0 (the default) means no page paging.
+
+Example:
+
+```asm
+.pagesize 60
+```
+
+### `.bytesperline count`
+
+Sets the number of bytes to display per line in the listing output. When an instruction or data directive emits more bytes than specified, the listing continues on additional lines with updated address prefixes. Default is 16 bytes per line.
+
+Example:
+
+```asm
+.bytesperline 8
+.byte $00, $01, $02, $03, $04, $05, $06, $07, $08, $09
+```
+
+In the listing, this produces:
+
+```
+8000 00 01 02 03 04 05 06 07
+8008 08 09
+```
+
 ## Source format notes
 
 - A line may contain an optional label, an opcode or directive, comma-separated operands, and an optional semicolon comment.
