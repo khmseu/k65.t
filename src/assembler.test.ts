@@ -83,8 +83,9 @@ test("assemble reports diagnostics for unresolved symbols and unknown mnemonics"
 
   assert.equal(result.binary.length, 0);
   assert.equal(result.diagnostics.length, 2);
+  assert.ok(result.diagnostics.some((entry) => entry.code === "E_EXPR_UNKNOWN_SYMBOL"));
+  assert.ok(result.diagnostics.some((entry) => entry.code === "E_OPCODE_UNKNOWN"));
   assert.ok(result.diagnostics.some((entry) => entry.message.includes("unknown symbol 'missing_symbol'")));
-  assert.ok(result.diagnostics.some((entry) => entry.message.includes("Unknown mnemonic: FOO")));
 });
 
 test("assemble reports divide-by-zero in expression diagnostics", () => {
@@ -97,5 +98,7 @@ test("assemble reports divide-by-zero in expression diagnostics", () => {
 
   assert.equal(result.binary.length, 0);
   assert.equal(result.diagnostics.length, 1);
+  assert.equal(result.diagnostics[0]?.code, "E_EXPR_DIV_BY_ZERO");
+  assert.equal(result.diagnostics[0]?.column, 5);
   assert.ok(result.diagnostics[0]?.message.includes("division by zero"));
 });

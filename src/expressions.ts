@@ -1,6 +1,8 @@
 export interface ExpressionEvaluation {
   readonly value: number | null;
   readonly error: string | null;
+  readonly errorCode: string | null;
+  readonly errorColumn: number | null;
 }
 
 export function evaluateExpression(
@@ -26,6 +28,8 @@ class ExpressionParser {
   private readonly location: number;
   private position = 0;
   private error: string | null = null;
+  private errorCode: string | null = null;
+  private errorColumn: number | null = null;
 
   constructor(input: string, symbols: ReadonlyMap<string, number>, location: number) {
     this.input = input;
@@ -36,12 +40,17 @@ class ExpressionParser {
   parseDetailed(): ExpressionEvaluation {
     this.skipWhitespace();
     if (this.position >= this.input.length) {
-      return { value: null, error: "empty expression" };
+      return { value: null, error: "empty expression", errorCode: "E_EXPR_EMPTY", errorColumn: 1 };
     }
 
     const value = this.parseBitwiseOr();
     if (value === null) {
-      return { value: null, error: this.error ?? "invalid expression" };
+      return {
+        value: null,
+        error: this.error ?? "invalid expression",
+        errorCode: this.errorCode ?? "E_EXPR_INVALID",
+        errorColumn: this.errorColumn ?? this.position + 1,
+      };
     }
 
     this.skipWhitespace();
@@ -49,10 +58,12 @@ class ExpressionParser {
       return {
         value: null,
         error: `unexpected token '${this.input[this.position] ?? "<eof>"}' at column ${this.position + 1}`,
+        errorCode: "E_EXPR_UNEXPECTED_TOKEN",
+        errorColumn: this.position + 1,
       };
     }
 
-    return { value: value & 0xffff, error: null };
+    return { value: value & 0xffff, error: null, errorCode: null, errorColumn: null };
   }
 
   private parseBitwiseOr(): number | null {
@@ -159,9 +170,10 @@ class ExpressionParser {
       }
 
       if (this.consume("/")) {
+        const operatorColumn = this.position;
         const right = this.parseUnary();
         if (right === null || right === 0) {
-          this.fail("division by zero");
+          this.fail("division by zero", "E_EXPR_DIV_BY_ZERO", operatorColumn);
           return null;
         }
         left = Math.trunc(left / right) & 0xffff;
@@ -169,9 +181,10 @@ class ExpressionParser {
       }
 
       if (this.consume("%")) {
+        const operatorColumn = this.position;
         const right = this.parseUnary();
         if (right === null || right === 0) {
-          this.fail("modulo by zero");
+          this.fail("modulo by zero", "E_EXPR_MOD_BY_ZERO", operatorColumn);
           return null;
         }
         left = (left % right) & 0xffff;
@@ -208,10 +221,11 @@ class ExpressionParser {
     this.skipWhitespace();
 
     if (this.consume("(")) {
+      const openColumn = this.position;
       const value = this.parseBitwiseOr();
       this.skipWhitespace();
       if (value === null || !this.consume(")")) {
-        this.fail("missing ')' in expression");
+        this.fail("missing ')' in expression", "E_EXPR_MISSING_RPAREN", openColumn);
         return null;
       }
       return value;
@@ -229,16 +243,21 @@ class ExpressionParser {
 
     const identifier = this.parseIdentifier();
     if (identifier !== null) {
+      const identifierColumn = this.position - identifier.length + 1;
       const resolved = this.symbols.get(identifier.toUpperCase());
       if (resolved === undefined) {
-        this.fail(`unknown symbol '${identifier}'`);
+        this.fail(`unknown symbol '${identifier}'`, "E_EXPR_UNKNOWN_SYMBOL", identifierColumn);
         return null;
       }
 
       return resolved;
     }
 
-    this.fail(`invalid token '${this.input[this.position] ?? "<eof>"}' at column ${this.position + 1}`);
+    this.fail(
+      `invalid token '${this.input[this.position] ?? "<eof>"}' at column ${this.position + 1}`,
+      "E_EXPR_INVALID_TOKEN",
+      this.position + 1,
+    );
     return null;
   }
 
@@ -301,9 +320,11 @@ class ExpressionParser {
     }
   }
 
-  private fail(message: string): void {
+  private fail(message: string, code: string, column: number): void {
     if (this.error === null) {
       this.error = message;
+      this.errorCode = code;
+      this.errorColumn = column;
     }
   }
 }

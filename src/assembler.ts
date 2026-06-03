@@ -130,11 +130,18 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
     if (mnemonic === ".ORG") {
       const expression = line.operands[0];
       if (expression === undefined) {
-        diagnostics.push(makeDiagnostic(line, ".org requires an expression operand"));
+        diagnostics.push(makeDiagnostic(line, "E_DIR_ORG_OPERAND", ".org requires an expression operand"));
       } else {
         const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
         if (evaluation.value === null) {
-          diagnostics.push(makeDiagnostic(line, `.org expression error (${expression}): ${evaluation.error ?? "invalid expression"}`));
+          diagnostics.push(
+            makeDiagnostic(
+              line,
+              evaluation.errorCode ?? "E_EXPR_INVALID",
+              `.org expression error (${expression}): ${evaluation.error ?? "invalid expression"}`,
+              evaluation.errorColumn ?? undefined,
+            ),
+          );
         }
       }
       continue;
@@ -142,15 +149,22 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
 
     if (mnemonic === ".EQU") {
       if (line.label === undefined) {
-        diagnostics.push(makeDiagnostic(line, ".equ requires a label"));
+        diagnostics.push(makeDiagnostic(line, "E_DIR_EQU_LABEL", ".equ requires a label"));
       }
       const expression = line.operands[0];
       if (expression === undefined) {
-        diagnostics.push(makeDiagnostic(line, ".equ requires an expression operand"));
+        diagnostics.push(makeDiagnostic(line, "E_DIR_EQU_OPERAND", ".equ requires an expression operand"));
       } else {
         const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
         if (evaluation.value === null) {
-          diagnostics.push(makeDiagnostic(line, `.equ expression error (${expression}): ${evaluation.error ?? "invalid expression"}`));
+          diagnostics.push(
+            makeDiagnostic(
+              line,
+              evaluation.errorCode ?? "E_EXPR_INVALID",
+              `.equ expression error (${expression}): ${evaluation.error ?? "invalid expression"}`,
+              evaluation.errorColumn ?? undefined,
+            ),
+          );
         }
       }
       continue;
@@ -161,7 +175,12 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
         const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
         if (evaluation.value === null) {
           diagnostics.push(
-            makeDiagnostic(line, `byte expression error (${expression}): ${evaluation.error ?? "invalid expression"}`),
+            makeDiagnostic(
+              line,
+              evaluation.errorCode ?? "E_EXPR_INVALID",
+              `byte expression error (${expression}): ${evaluation.error ?? "invalid expression"}`,
+              evaluation.errorColumn ?? undefined,
+            ),
           );
         }
       });
@@ -174,7 +193,12 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
         const evaluation = evaluateExpressionDetailed(expression, passState.symbols, location);
         if (evaluation.value === null) {
           diagnostics.push(
-            makeDiagnostic(line, `word expression error (${expression}): ${evaluation.error ?? "invalid expression"}`),
+            makeDiagnostic(
+              line,
+              evaluation.errorCode ?? "E_EXPR_INVALID",
+              `word expression error (${expression}): ${evaluation.error ?? "invalid expression"}`,
+              evaluation.errorColumn ?? undefined,
+            ),
           );
         }
       });
@@ -184,13 +208,15 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
 
     const opcodeTable = opcodes[mnemonic];
     if (opcodeTable === undefined) {
-      diagnostics.push(makeDiagnostic(line, `Unknown mnemonic: ${mnemonic}`));
+      diagnostics.push(makeDiagnostic(line, "E_OPCODE_UNKNOWN", `Unknown mnemonic: ${mnemonic}`));
       continue;
     }
 
     const resolved = resolveMode(mnemonic, line.operands, opcodeTable, passState.symbols, location, false);
     if (opcodeTable[resolved.mode] === undefined) {
-      diagnostics.push(makeDiagnostic(line, `Unsupported addressing mode for ${mnemonic}: ${resolved.mode}`));
+      diagnostics.push(
+        makeDiagnostic(line, "E_MODE_UNSUPPORTED", `Unsupported addressing mode for ${mnemonic}: ${resolved.mode}`),
+      );
       continue;
     }
 
@@ -200,7 +226,9 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
       diagnostics.push(
         makeDiagnostic(
           line,
-          `operand expression error (${operandText.length > 0 ? operandText : "<empty>"}): ${detail ?? "invalid expression"}`,
+          detail.code,
+          `operand expression error (${operandText.length > 0 ? operandText : "<empty>"}): ${detail.message}`,
+          detail.column,
         ),
       );
       continue;
@@ -209,7 +237,7 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
     if (resolved.mode === "relative") {
       const branchOffset = computeBranchOffset(resolved.value ?? 0, location);
       if (branchOffset < -128 || branchOffset > 127) {
-        diagnostics.push(makeDiagnostic(line, `Branch out of range at ${toHex16(location)}`));
+        diagnostics.push(makeDiagnostic(line, "E_BRANCH_RANGE", `Branch out of range at ${toHex16(location)}`));
         continue;
       }
     }
@@ -225,10 +253,10 @@ function resolveOperandDiagnostic(
   operands: readonly string[],
   symbols: ReadonlyMap<string, number>,
   location: number,
-): string | null {
+): { code: string; message: string; column?: number } {
   const operand = operands.join(", ").trim();
   if (operand.length === 0) {
-    return "missing operand";
+    return { code: "E_OPERAND_MISSING", message: "missing operand" };
   }
 
   let expression = operand;
@@ -261,7 +289,11 @@ function resolveOperandDiagnostic(
   }
 
   const evaluation = evaluateExpressionDetailed(expression, symbols, location);
-  return evaluation.error;
+  return {
+    code: evaluation.errorCode ?? "E_EXPR_INVALID",
+    message: evaluation.error ?? "invalid expression",
+    ...(evaluation.errorColumn !== null ? { column: evaluation.errorColumn } : {}),
+  };
 }
 
 function buildListingOnly(lines: readonly SourceLine[]): ListingLine[] {
@@ -518,9 +550,11 @@ function modeNeedsValue(mode: AddressingMode): boolean {
   return mode !== "implied" && mode !== "accumulator";
 }
 
-function makeDiagnostic(line: SourceLine, message: string): AssemblyDiagnostic {
+function makeDiagnostic(line: SourceLine, code: string, message: string, column?: number): AssemblyDiagnostic {
   return {
+    code,
     lineNumber: line.lineNumber,
+    ...(column !== undefined ? { column } : {}),
     message,
     source: line.raw,
   };

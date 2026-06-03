@@ -22,7 +22,9 @@ export interface SymbolEntry {
 }
 
 export interface AssemblyDiagnostic {
+  readonly code: string;
   readonly lineNumber: number;
+  readonly column?: number;
   readonly message: string;
   readonly source: string;
 }

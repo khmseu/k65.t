@@ -14,7 +14,8 @@ async function main(): Promise<void> {
 
   if (result.diagnostics.length > 0) {
     for (const diagnostic of result.diagnostics) {
-      console.error(`${inputPath}:${diagnostic.lineNumber}: ${diagnostic.message}`);
+      const position = diagnostic.column === undefined ? `${diagnostic.lineNumber}` : `${diagnostic.lineNumber}:${diagnostic.column}`;
+      console.error(`${inputPath}:${position}: ${diagnostic.code}: ${diagnostic.message}`);
       console.error(`  ${diagnostic.source}`);
     }
     throw new Error(`Assembly failed with ${result.diagnostics.length} diagnostic(s)`);
