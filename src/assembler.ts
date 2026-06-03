@@ -742,10 +742,9 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
 
     if (isListingDirective(mnemonic)) {
       // Show directives in the listing
-      const directiveListingLine: ListingLine = { address: null, bytes: [], source: line.raw };
-      listing.push(directiveListingLine);
+      let directiveListingLine: ListingLine = { address: null, bytes: [], source: line.raw };
 
-      // Process the directive's effects
+      // Process the directive's effects and attach properties to directive line
       if (mnemonic === ".PAGESIZE") {
         const pageExpr = line.operands[0];
         if (pageExpr !== undefined) {
@@ -765,9 +764,11 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
         const subExpr = line.operands.join(" ");
         pendingSubtitle = subExpr.replace(/^"|"$/g, ""); // Strip quotes if present
       } else if (mnemonic === ".PAGE" || mnemonic === ".EJECT") {
-        pendingPageBreak = true;
+        // Attach page break directly to this directive line
+        directiveListingLine = { ...directiveListingLine, pageBreak: true };
       }
       // .LIST and .NOLIST are recognized but don't do anything yet
+      listing.push(directiveListingLine);
       continue;
     }
 
