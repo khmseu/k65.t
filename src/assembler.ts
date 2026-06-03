@@ -1,4 +1,5 @@
 import { parseSource } from "./parser.js";
+import { evaluateExpression } from "./expressions.js";
 import { branchMnemonics, modeSize, opcodes, type AddressingMode } from "./opcodes.js";
 import { preprocessSource } from "./preprocessor.js";
 import type { AssemblyResult, ListingLine, SourceLine, SymbolEntry } from "./types.js";
@@ -54,15 +55,22 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
     let maxAddress = Number.NEGATIVE_INFINITY;
 
     for (const [i, line] of lines.entries()) {
-
       if (line.kind !== "code") {
         lineSizes.push(0);
         continue;
       }
 
-      if (line.label !== undefined) {
+      if (line.label !== undefined && line.mnemonic?.toUpperCase() !== ".EQU") {
         const key = line.label.toUpperCase();
         nextSymbols.set(key, location & 0xffff);
+      }
+
+      if (line.label !== undefined && line.mnemonic?.toUpperCase() === ".EQU") {
+        const expr = line.operands[0];
+        const resolved = expr === undefined ? null : evaluateExpression(expr, symbols, location);
+        if (resolved !== null) {
+          nextSymbols.set(line.label.toUpperCase(), resolved);
+        }
       }
 
       const sizedLine = sizeLine(line, location, symbols);
@@ -115,6 +123,10 @@ function sizeLine(line: SourceLine, location: number, symbols: ReadonlyMap<strin
     return { size: 0, nextAddress: (resolved ?? location) & 0xffff };
   }
 
+  if (mnemonic === ".EQU") {
+    return { size: 0, nextAddress: location };
+  }
+
   if (mnemonic === ".BYTE") {
     return { size: line.operands.length, nextAddress: location + line.operands.length };
   }
@@ -157,6 +169,11 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
       const target = evaluateExpression(line.operands[0] ?? "0", passState.symbols, location) ?? location;
       location = target & 0xffff;
       listing.push({ address: location, bytes: [], source: line.raw });
+      continue;
+    }
+
+    if (mnemonic === ".EQU") {
+      listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
       continue;
     }
 
@@ -330,74 +347,6 @@ function encodeInstruction(opcode: number, modeResolution: ModeResolution, locat
     case "indirect":
       return [opcode, value & 0xff, (value >> 8) & 0xff];
   }
-}
-
-function evaluateExpression(
-  expression: string,
-  symbols: ReadonlyMap<string, number>,
-  location: number,
-): number | null {
-  const trimmed = expression.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  if (trimmed === "*") {
-    return location & 0xffff;
-  }
-
-  let total = 0;
-  let sign = 1;
-  let token = "";
-  let foundAny = false;
-
-  for (let i = 0; i <= trimmed.length; i += 1) {
-    const ch = trimmed[i];
-    if (i === trimmed.length || ch === "+" || ch === "-") {
-      if (token.trim().length > 0) {
-        const value = resolveTerm(token.trim(), symbols);
-        if (value === null) {
-          return null;
-        }
-        total += sign * value;
-        foundAny = true;
-        token = "";
-      }
-
-      if (ch === "+") {
-        sign = 1;
-      }
-      if (ch === "-") {
-        sign = -1;
-      }
-      continue;
-    }
-
-    token += ch;
-  }
-
-  if (!foundAny) {
-    return null;
-  }
-
-  return total & 0xffff;
-}
-
-function resolveTerm(term: string, symbols: ReadonlyMap<string, number>): number | null {
-  if (/^\$[0-9a-f]+$/i.test(term)) {
-    return Number.parseInt(term.slice(1), 16);
-  }
-  if (/^0x[0-9a-f]+$/i.test(term)) {
-    return Number.parseInt(term.slice(2), 16);
-  }
-  if (/^%[01]+$/.test(term)) {
-    return Number.parseInt(term.slice(1), 2);
-  }
-  if (/^[0-9]+$/.test(term)) {
-    return Number.parseInt(term, 10);
-  }
-
-  return symbols.get(term.toUpperCase()) ?? null;
 }
 
 function writeBytes(target: Map<number, number>, address: number, values: readonly number[]): void {
