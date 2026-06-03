@@ -60,6 +60,7 @@ export const opcodes: OpcodeMap = {
   BMI: { relative: 0x30 },
   BNE: { relative: 0xd0 },
   BPL: { relative: 0x10 },
+  BRK: { implied: 0x00 },
   BVC: { relative: 0x50 },
   BVS: { relative: 0x70 },
   BIT: { zeropage: 0x24, absolute: 0x2c },
@@ -127,6 +128,10 @@ export const opcodes: OpcodeMap = {
     indexedIndirect: 0x01,
     indirectIndexed: 0x11,
   },
+  PHA: { implied: 0x48 },
+  PHP: { implied: 0x08 },
+  PLA: { implied: 0x68 },
+  PLP: { implied: 0x28 },
   ROL: {
     accumulator: 0x2a,
     zeropage: 0x26,
@@ -141,6 +146,7 @@ export const opcodes: OpcodeMap = {
     absolute: 0x6e,
     absoluteX: 0x7e,
   },
+  RTI: { implied: 0x40 },
   RTS: { implied: 0x60 },
   SBC: {
     immediate: 0xe9,
