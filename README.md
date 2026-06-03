@@ -24,5 +24,5 @@
 ## Scripts
 
 - `npm run build` to compile TypeScript into `dist/`.
-- `npm start` to run the assembled CLI entry point.
+- `npm start -- [--out-dir DIR] [--bin FILE] [--lst FILE] [--sym FILE] input.asm` to run the assembled CLI entry point.
 - `npm test` to run compiled tests.

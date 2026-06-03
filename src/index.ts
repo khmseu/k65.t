@@ -1,13 +1,11 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
 import { assemble } from "./assembler.js";
+import { parseCliArgs, resolveOutputPaths } from "./cli.js";
 import { formatListing } from "./listing.js";
 
 async function main(): Promise<void> {
-  const inputPath = process.argv[2];
-  if (!inputPath) {
-    throw new Error("Usage: k65t <input.asm>");
-  }
+  const cli = parseCliArgs(process.argv.slice(2));
+  const inputPath = cli.inputPath;
 
   const source = await readFile(inputPath, "utf8");
   const result = assemble(source, { sourcePath: inputPath });
@@ -21,11 +19,7 @@ async function main(): Promise<void> {
     throw new Error(`Assembly failed with ${result.diagnostics.length} diagnostic(s)`);
   }
 
-  const outputDir = dirname(inputPath);
-  const stem = basename(inputPath, extname(inputPath));
-  const binPath = join(outputDir, `${stem}.bin`);
-  const lstPath = join(outputDir, `${stem}.lst`);
-  const symPath = join(outputDir, `${stem}.sym`);
+  const { binPath, lstPath, symPath } = resolveOutputPaths(cli);
 
   await writeFile(binPath, result.binary);
   await writeFile(lstPath, `${formatListing(result.listing)}\n`);
