@@ -1,0 +1,34 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { assemble } from "./assembler.js";
+import { formatListing } from "./listing.js";
+
+test("assemble supports labels, forward references, directives, and listing format", () => {
+  const source = [
+    "; leading comment",
+    "* alternate comment",
+    "  .org $8000",
+    "start: LDA #$01",
+    "       STA $0200",
+    "loop   INX",
+    "       BNE loop",
+    "tail   .byte $AA, 2",
+    "       .word start",
+    "",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.startAddress, 0x8000);
+  assert.deepEqual(Array.from(result.binary), [0xa9, 0x01, 0x8d, 0x00, 0x02, 0xe8, 0xd0, 0xfd, 0xaa, 0x02, 0x00, 0x80]);
+
+  const symbolMap = new Map(result.symbols.map((entry) => [entry.name, entry.value]));
+  assert.equal(symbolMap.get("LOOP"), 0x8005);
+  assert.equal(symbolMap.get("START"), 0x8000);
+  assert.equal(symbolMap.get("TAIL"), 0x8008);
+
+  const listingText = formatListing(result.listing);
+  assert.ok(listingText.includes("8000 A9 01 start: LDA #$01"));
+  assert.ok(listingText.includes("8005 E8 loop   INX"));
+  assert.ok(listingText.includes("8006 D0 FD        BNE loop"));
+});

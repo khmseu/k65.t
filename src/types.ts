@@ -25,4 +25,5 @@ export interface AssemblyResult {
   readonly binary: Uint8Array;
   readonly listing: readonly ListingLine[];
   readonly symbols: readonly SymbolEntry[];
+  readonly startAddress: number;
 }
