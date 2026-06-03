@@ -86,14 +86,16 @@ export function formatListing(
     // Check if this line forces a page break (can be directive or content)
     const forcePageBreak = line.pageBreak ?? false;
 
-    if (forcePageBreak && currentPageLineCount > 0) {
-      // Force a page break - insert form feed character before this line
-      formattedLines.push("\f");
-      currentPageLineCount = 0;
-      hasContentOnCurrentPage = false;
-      pageNumber += 1;
+    if (forcePageBreak) {
+      // Only insert form feed if we already have content on this page
+      if (currentPageLineCount > 0) {
+        formattedLines.push("\f");
+        currentPageLineCount = 0;
+        hasContentOnCurrentPage = false;
+        pageNumber += 1;
+      }
 
-      // Insert page headers right after the form feed (before the directive)
+      // Insert page headers (before the directive), whether at start or after form feed
       if (currentTitle !== undefined || currentSubtitle !== undefined) {
         if (currentTitle !== undefined) {
           formattedLines.push(currentTitle);
@@ -127,7 +129,7 @@ export function formatListing(
         }
       }
 
-      // Insert page headers at start of page if not already done (for non-paged content)
+      // Insert page headers at start of page if not already done (for non-paged content at start of file)
       if (
         !hasContentOnCurrentPage &&
         (currentTitle !== undefined || currentSubtitle !== undefined)

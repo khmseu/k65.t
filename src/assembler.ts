@@ -764,8 +764,16 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
         const subExpr = line.operands.join(" ");
         pendingSubtitle = subExpr.replace(/^"|"$/g, ""); // Strip quotes if present
       } else if (mnemonic === ".PAGE" || mnemonic === ".EJECT") {
-        // Attach page break directly to this directive line
-        directiveListingLine = { ...directiveListingLine, pageBreak: true };
+        // Attach page break and any pending metadata to this directive line
+        directiveListingLine = {
+          ...directiveListingLine,
+          pageBreak: true,
+          ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
+          ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
+        };
+        // Reset pending after attaching to directive
+        pendingTitle = undefined;
+        pendingSubtitle = undefined;
       }
       // .LIST and .NOLIST are recognized but don't do anything yet
       listing.push(directiveListingLine);
