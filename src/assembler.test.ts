@@ -397,3 +397,55 @@ test("assemble reports unexpected .endif", () => {
   assert.equal(result.diagnostics.length, 1);
   assert.equal(result.diagnostics[0]?.code, "E_IF_UNEXPECTED_END");
 });
+
+test("listing metadata directives produce visible effects in output", () => {
+  const source = [
+    ".title \"Test Program\"",
+    ".subttl \"Version 1.0\"",
+    ".pagesize 5",
+    ".bytesperline 8",
+    ".org $8000",
+    "lda #$01",
+    "lda #$02",
+    "lda #$03",
+    ".page",
+    ".title \"Second Page\"",
+    "lda #$04",
+    "lda #$05",
+  ].join("\n");
+
+  const result = assemble(source);
+  assert.equal(result.diagnostics.length, 0);
+  assert.equal(result.pageSize, 5);
+  assert.equal(result.bytesPerLine, 8);
+
+  const listing = formatListing(result.listing, { pageSize: result.pageSize, bytesPerLine: result.bytesPerLine });
+
+  // Verify title and subtitle appear on first page
+  assert.ok(listing.includes("Test Program"), "First page should have title");
+  assert.ok(listing.includes("Version 1.0"), "First page should have subtitle");
+
+  // Verify page break (blank line) appears between pages
+  const lines = listing.split("\n");
+  let blankLineCount = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.trim() === "") {
+      blankLineCount++;
+    }
+  }
+  assert.ok(blankLineCount > 0, "Listing should have blank lines for page breaks");
+
+  // Verify second page title appears
+  assert.ok(listing.includes("Second Page"), "Second page should have new title");
+
+  // Verify metadata directives themselves do NOT appear as listing lines
+  assert.equal(!listing.match(/^[0-9A-F]{4}\s+\.title/m), true, ".title directive should not appear in listing");
+  assert.equal(!listing.match(/^[0-9A-F]{4}\s+\.subttl/m), true, ".subttl directive should not appear in listing");
+  assert.equal(!listing.match(/^[0-9A-F]{4}\s+\.pagesize/m), true, ".pagesize directive should not appear in listing");
+  assert.equal(!listing.match(/^[0-9A-F]{4}\s+\.bytesperline/m), true, ".bytesperline directive should not appear in listing");
+  assert.equal(!listing.match(/^[0-9A-F]{4}\s+\.page/m), true, ".page directive should not appear in listing");
+
+  // Verify actual code appears
+  assert.ok(listing.includes("lda #$01"), "Code should appear in listing");
+  assert.ok(listing.includes("lda #$04"), "Code after page break should appear in listing");
+});
