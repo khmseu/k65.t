@@ -148,3 +148,6 @@ vite.config.ts.timestamp-*
 test/asrom.s
 test/test.err
 test/test.out
+test/asrom.bin
+test/asrom.lst
+test/asrom.sym
