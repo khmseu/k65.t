@@ -197,8 +197,83 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
       continue;
     }
 
+    if (parsed.kind === "code" && mnemonic === ".IF") {
+      const conditionOperand = parsed.operands[0];
+      if (conditionOperand === undefined) {
+        throw new PreprocessError("E_IF_CONDITION", ".if requires a condition expression", parsed.lineNumber, parsed.raw);
+      }
+
+      const branches: Array<{ condition: string | null; lines: string[] }> = [];
+      let activeBranch: { condition: string | null; lines: string[] } = { condition: conditionOperand, lines: [] };
+      let foundEnd = false;
+      let nesting = 0;
+      let sawElse = false;
+
+      for (i += 1; i < lines.length; i += 1) {
+        const bodyLine = lines[i]!;
+        const bodyParsed = parseSource(bodyLine)[0]!;
+        const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
+
+        if (bodyParsed.kind === "code" && bodyMnemonic === ".IF") {
+          nesting += 1;
+          activeBranch.lines.push(bodyLine);
+          continue;
+        }
+
+        if (bodyParsed.kind === "code" && bodyMnemonic === ".ENDIF") {
+          if (nesting === 0) {
+            branches.push(activeBranch);
+            foundEnd = true;
+            break;
+          }
+          nesting -= 1;
+          activeBranch.lines.push(bodyLine);
+          continue;
+        }
+
+        if (nesting === 0 && bodyParsed.kind === "code" && bodyMnemonic === ".ELSEIF") {
+          if (sawElse) {
+            throw new PreprocessError("E_IF_ORDER", ".elseif cannot appear after .else", bodyParsed.lineNumber, bodyParsed.raw);
+          }
+          const elseifCondition = bodyParsed.operands[0];
+          if (elseifCondition === undefined) {
+            throw new PreprocessError("E_IF_CONDITION", ".elseif requires a condition expression", bodyParsed.lineNumber, bodyParsed.raw);
+          }
+          branches.push(activeBranch);
+          activeBranch = { condition: elseifCondition, lines: [] };
+          continue;
+        }
+
+        if (nesting === 0 && bodyParsed.kind === "code" && bodyMnemonic === ".ELSE") {
+          if (sawElse) {
+            throw new PreprocessError("E_IF_ORDER", "Only one .else is allowed per .if block", bodyParsed.lineNumber, bodyParsed.raw);
+          }
+          sawElse = true;
+          branches.push(activeBranch);
+          activeBranch = { condition: null, lines: [] };
+          continue;
+        }
+
+        activeBranch.lines.push(bodyLine);
+      }
+
+      if (!foundEnd) {
+        throw new PreprocessError("E_IF_UNTERMINATED", "Unterminated .if block", parsed.lineNumber, parsed.raw);
+      }
+
+      const selectedBranch = selectConditionalBranch(branches, parsed.lineNumber, parsed.raw);
+      if (selectedBranch !== undefined) {
+        output.push(...preprocessLines(selectedBranch.lines, context, macros));
+      }
+      continue;
+    }
+
     if (parsed.kind === "code" && mnemonic === ".ENDREPEAT") {
       throw new PreprocessError("E_REPEAT_UNEXPECTED_END", "Unexpected .endrepeat", parsed.lineNumber, parsed.raw);
+    }
+
+    if (parsed.kind === "code" && (mnemonic === ".ELSE" || mnemonic === ".ELSEIF" || mnemonic === ".ENDIF")) {
+      throw new PreprocessError("E_IF_UNEXPECTED_END", `Unexpected ${mnemonic.toLowerCase()}`, parsed.lineNumber, parsed.raw);
     }
 
     output.push(...expandLine(line, macros, 0));
@@ -278,4 +353,32 @@ function parseIncludePath(operand: string): string | null {
   }
 
   return trimmed.slice(1, -1);
+}
+
+function selectConditionalBranch(
+  branches: ReadonlyArray<{ condition: string | null; lines: string[] }>,
+  lineNumber: number,
+  source: string,
+): { condition: string | null; lines: string[] } | undefined {
+  for (const branch of branches) {
+    if (branch.condition === null) {
+      return branch;
+    }
+
+    const evaluation = evaluateExpressionDetailed(branch.condition, new Map(), 0);
+    if (evaluation.value === null) {
+      throw new PreprocessError(
+        evaluation.errorCode ?? "E_EXPR_INVALID",
+        `.if condition error (${branch.condition}): ${evaluation.error ?? "invalid expression"}`,
+        lineNumber,
+        source,
+      );
+    }
+
+    if (evaluation.value !== 0) {
+      return branch;
+    }
+  }
+
+  return undefined;
 }

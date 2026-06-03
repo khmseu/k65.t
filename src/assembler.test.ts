@@ -228,3 +228,39 @@ test("assemble reports unexpected .endrepeat", () => {
   assert.equal(result.diagnostics.length, 1);
   assert.equal(result.diagnostics[0]?.code, "E_REPEAT_UNEXPECTED_END");
 });
+
+test("assemble expands conditional assembly blocks", () => {
+  const source = [
+    ".org $8B00",
+    ".if 0",
+    "  .byte $00",
+    ".elseif 1",
+    "  .byte $11",
+    ".else",
+    "  .byte $22",
+    ".endif",
+    "tail .byte $33",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0x11, 0x33]);
+  assert.equal(result.symbols.find((entry) => entry.name === "TAIL")?.value, 0x8b01);
+});
+
+test("assemble reports unterminated conditional assembly blocks", () => {
+  const result = assemble([".if 1", "  .byte 1"].join("\n"));
+
+  assert.equal(result.binary.length, 0);
+  assert.equal(result.diagnostics.length, 1);
+  assert.equal(result.diagnostics[0]?.code, "E_IF_UNTERMINATED");
+});
+
+test("assemble reports unexpected .endif", () => {
+  const result = assemble(".endif");
+
+  assert.equal(result.binary.length, 0);
+  assert.equal(result.diagnostics.length, 1);
+  assert.equal(result.diagnostics[0]?.code, "E_IF_UNEXPECTED_END");
+});
