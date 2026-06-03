@@ -422,7 +422,8 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
     if (resolved.mode === "relative") {
       const branchOffset = computeBranchOffset(resolved.value ?? 0, location);
       if (branchOffset < -128 || branchOffset > 127) {
-        diagnostics.push(makeDiagnostic(line, "E_BRANCH_RANGE", `Branch out of range at ${toHex16(location)}`));
+        const offsetStr = branchOffset >= 0 ? `+${branchOffset}` : `${branchOffset}`;
+        diagnostics.push(makeDiagnostic(line, "E_BRANCH_RANGE", `Branch out of range at ${toHex16(location)}: offset is ${offsetStr} (valid range: -128 to +127)`));
         continue;
       }
     }
