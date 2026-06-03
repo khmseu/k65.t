@@ -69,7 +69,34 @@ export function formatListing(
   let currentTitle: string | undefined;
   let currentSubtitle: string | undefined;
 
-  for (const line of lines) {
+  // Pre-compute: for each .page/.eject, find and mark preceding .title/.subttl directives to skip
+  const skipped = new Set<number>();
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line !== undefined && line.pageBreak) {
+      // Look back immediately before this line for .title and .subttl directives
+      for (let j = i - 1; j >= 0 && j >= i - 2; j--) {
+        const prev = lines[j];
+        if (prev !== undefined && prev.address === null) {
+          const src = prev.source.toUpperCase();
+          if (src.startsWith(".SUBTTL") || src.startsWith(".TITLE")) {
+            skipped.add(j); // Mark for skipping from normal output
+          }
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    if (skipped.has(i)) {
+      continue; // Skip lines already processed
+    }
+
+    const line = lines[i];
+    if (line === undefined) {
+      continue; // Should not happen, but satisfy TypeScript
+    }
+
     // Update title/subtitle if present on this line
     if (line.title !== undefined) {
       currentTitle = line.title;
@@ -95,7 +122,7 @@ export function formatListing(
         pageNumber += 1;
       }
 
-      // Insert page headers (before the directive), whether at start or after form feed
+      // Insert page headers (before the directives), whether at start or after form feed
       if (currentTitle !== undefined || currentSubtitle !== undefined) {
         if (currentTitle !== undefined) {
           formattedLines.push(currentTitle);
@@ -105,6 +132,29 @@ export function formatListing(
         }
         formattedLines.push(""); // Blank line after header
         hasContentOnCurrentPage = true;
+      }
+
+      // Now emit .title and .subttl directives that preceded this .page
+      // (they were marked as skipped to remove them from normal output)
+      // Emit in order: .title first, then .subttl (they appear before .page in reverse index order)
+      const titleLine = i > 1 ? lines[i - 2] : undefined;
+      const subttlLine = i > 0 ? lines[i - 1] : undefined;
+
+      if (
+        titleLine !== undefined &&
+        titleLine.address === null &&
+        titleLine.source.toUpperCase().startsWith(".TITLE")
+      ) {
+        const formatted = formatListingLine(titleLine, { bytesPerLine });
+        formattedLines.push(...formatted);
+      }
+      if (
+        subttlLine !== undefined &&
+        subttlLine.address === null &&
+        subttlLine.source.toUpperCase().startsWith(".SUBTTL")
+      ) {
+        const formatted = formatListingLine(subttlLine, { bytesPerLine });
+        formattedLines.push(...formatted);
       }
     }
 
