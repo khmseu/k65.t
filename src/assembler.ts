@@ -741,7 +741,11 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
     }
 
     if (isListingDirective(mnemonic)) {
-      // Metadata directives don't produce any listing output
+      // Show directives in the listing
+      const directiveListingLine: ListingLine = { address: null, bytes: [], source: line.raw };
+      listing.push(directiveListingLine);
+
+      // Process the directive's effects
       if (mnemonic === ".PAGESIZE") {
         const pageExpr = line.operands[0];
         if (pageExpr !== undefined) {
@@ -757,20 +761,11 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
       } else if (mnemonic === ".TITLE") {
         const titleExpr = line.operands.join(" ");
         pendingTitle = titleExpr.replace(/^"|"$/g, ""); // Strip quotes if present
-        // Mark the next content line with this title
-        if (pendingTitle) {
-          // Title will be applied to the next content line
-        }
       } else if (mnemonic === ".SUBTTL") {
         const subExpr = line.operands.join(" ");
         pendingSubtitle = subExpr.replace(/^"|"$/g, ""); // Strip quotes if present
-        // Mark the next content line with this subtitle
-        if (pendingSubtitle) {
-          // Subtitle will be applied to the next content line
-        }
       } else if (mnemonic === ".PAGE" || mnemonic === ".EJECT") {
         pendingPageBreak = true;
-        // Page break will be applied to the next content line
       }
       // .LIST and .NOLIST are recognized but don't do anything yet
       continue;
