@@ -36,6 +36,10 @@ function parseLine(raw: string, lineNumber: number): SourceLine {
     label = firstToken.slice(0, -1);
     mnemonic = secondToken;
     operands = collectOperands(tokens.slice(2));
+  } else if (tokens.length === 1 && isLikelyLabel(firstToken) && !isOpcodeLike(firstToken)) {
+    label = firstToken;
+    mnemonic = undefined;
+    operands = [];
   } else if (tokens.length >= 2 && isLikelyLabel(firstToken) && !isOpcodeLike(firstToken)) {
     label = firstToken;
     mnemonic = secondToken;

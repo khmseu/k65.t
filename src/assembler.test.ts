@@ -102,6 +102,25 @@ test("assemble reports multi-character string literals in expressions", () => {
   assert.equal(result.diagnostics[0]?.code, "E_EXPR_STRING_LENGTH");
 });
 
+test("assemble accepts label-only lines as zero-size anchors", () => {
+  const source = [
+    ".org $8830",
+    "start",
+    "      .byte $AA",
+    "next",
+    "      .byte $BB",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0xaa, 0xbb]);
+
+  const symbolMap = new Map(result.symbols.map((entry) => [entry.name, entry.value]));
+  assert.equal(symbolMap.get("START"), 0x8830);
+  assert.equal(symbolMap.get("NEXT"), 0x8831);
+});
+
 test("assemble resolves cheap labels within the nearest non-cheap label scope", () => {
   const source = [
     ".org $8C00",
