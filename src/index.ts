@@ -11,6 +11,15 @@ async function main(): Promise<void> {
 
   const source = await readFile(inputPath, "utf8");
   const result = assemble(source);
+
+  if (result.diagnostics.length > 0) {
+    for (const diagnostic of result.diagnostics) {
+      console.error(`${inputPath}:${diagnostic.lineNumber}: ${diagnostic.message}`);
+      console.error(`  ${diagnostic.source}`);
+    }
+    throw new Error(`Assembly failed with ${result.diagnostics.length} diagnostic(s)`);
+  }
+
   const outputDir = dirname(inputPath);
   const stem = basename(inputPath, extname(inputPath));
   const binPath = join(outputDir, `${stem}.bin`);

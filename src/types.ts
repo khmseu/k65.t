@@ -21,9 +21,16 @@ export interface SymbolEntry {
   readonly value: number;
 }
 
+export interface AssemblyDiagnostic {
+  readonly lineNumber: number;
+  readonly message: string;
+  readonly source: string;
+}
+
 export interface AssemblyResult {
   readonly binary: Uint8Array;
   readonly listing: readonly ListingLine[];
   readonly symbols: readonly SymbolEntry[];
   readonly startAddress: number;
+  readonly diagnostics: readonly AssemblyDiagnostic[];
 }

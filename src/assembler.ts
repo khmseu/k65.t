@@ -2,7 +2,7 @@ import { parseSource } from "./parser.js";
 import { evaluateExpression } from "./expressions.js";
 import { branchMnemonics, modeSize, opcodes, type AddressingMode } from "./opcodes.js";
 import { preprocessSource } from "./preprocessor.js";
-import type { AssemblyResult, ListingLine, SourceLine, SymbolEntry } from "./types.js";
+import type { AssemblyDiagnostic, AssemblyResult, ListingLine, SourceLine, SymbolEntry } from "./types.js";
 
 const MAX_PASSES = 10;
 
@@ -27,7 +27,8 @@ export function assemble(sourceText: string): AssemblyResult {
   const parsed = parseSource(preprocessSource(sourceText));
 
   const sized = runSizingPasses(parsed);
-  const emitted = emitBinary(parsed, sized);
+  const diagnostics = collectDiagnostics(parsed, sized);
+  const emitted = diagnostics.length === 0 ? emitBinary(parsed, sized) : { binary: new Uint8Array(), listing: buildListingOnly(parsed) };
   const symbols: SymbolEntry[] = Array.from(sized.symbols.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, value]) => ({ name, value }));
@@ -37,6 +38,7 @@ export function assemble(sourceText: string): AssemblyResult {
     listing: emitted.listing,
     symbols,
     startAddress: sized.startAddress,
+    diagnostics,
   };
 }
 
@@ -54,7 +56,7 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
     let minAddress = Number.POSITIVE_INFINITY;
     let maxAddress = Number.NEGATIVE_INFINITY;
 
-    for (const [i, line] of lines.entries()) {
+    for (const line of lines) {
       if (line.kind !== "code") {
         lineSizes.push(0);
         continue;
@@ -109,6 +111,102 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
   }
 
   return { symbols, lineSizes: previousSizes, startAddress, endAddress };
+}
+
+function collectDiagnostics(lines: readonly SourceLine[], passState: PassState): AssemblyDiagnostic[] {
+  const diagnostics: AssemblyDiagnostic[] = [];
+  let location = passState.startAddress;
+
+  for (const line of lines) {
+    if (line.kind !== "code") {
+      continue;
+    }
+
+    const mnemonic = line.mnemonic?.toUpperCase();
+    if (mnemonic === undefined) {
+      continue;
+    }
+
+    if (mnemonic === ".ORG") {
+      const expression = line.operands[0];
+      if (expression === undefined) {
+        diagnostics.push(makeDiagnostic(line, ".org requires an expression operand"));
+      } else if (evaluateExpression(expression, passState.symbols, location) === null) {
+        diagnostics.push(makeDiagnostic(line, `Unable to resolve .org expression: ${expression}`));
+      }
+      continue;
+    }
+
+    if (mnemonic === ".EQU") {
+      if (line.label === undefined) {
+        diagnostics.push(makeDiagnostic(line, ".equ requires a label"));
+      }
+      const expression = line.operands[0];
+      if (expression === undefined) {
+        diagnostics.push(makeDiagnostic(line, ".equ requires an expression operand"));
+      } else if (evaluateExpression(expression, passState.symbols, location) === null) {
+        diagnostics.push(makeDiagnostic(line, `Unable to resolve .equ expression: ${expression}`));
+      }
+      continue;
+    }
+
+    if (mnemonic === ".BYTE") {
+      line.operands.forEach((expression) => {
+        if (evaluateExpression(expression, passState.symbols, location) === null) {
+          diagnostics.push(makeDiagnostic(line, `Unable to resolve byte expression: ${expression}`));
+        }
+      });
+      location += line.operands.length;
+      continue;
+    }
+
+    if (mnemonic === ".WORD") {
+      line.operands.forEach((expression) => {
+        if (evaluateExpression(expression, passState.symbols, location) === null) {
+          diagnostics.push(makeDiagnostic(line, `Unable to resolve word expression: ${expression}`));
+        }
+      });
+      location += line.operands.length * 2;
+      continue;
+    }
+
+    const opcodeTable = opcodes[mnemonic];
+    if (opcodeTable === undefined) {
+      diagnostics.push(makeDiagnostic(line, `Unknown mnemonic: ${mnemonic}`));
+      continue;
+    }
+
+    const resolved = resolveMode(mnemonic, line.operands, opcodeTable, passState.symbols, location, false);
+    if (opcodeTable[resolved.mode] === undefined) {
+      diagnostics.push(makeDiagnostic(line, `Unsupported addressing mode for ${mnemonic}: ${resolved.mode}`));
+      continue;
+    }
+
+    if (modeNeedsValue(resolved.mode) && resolved.value === null) {
+      diagnostics.push(makeDiagnostic(line, `Unable to resolve operand expression: ${line.operands.join(", ")}`));
+      continue;
+    }
+
+    if (resolved.mode === "relative") {
+      const branchOffset = computeBranchOffset(resolved.value ?? 0, location);
+      if (branchOffset < -128 || branchOffset > 127) {
+        diagnostics.push(makeDiagnostic(line, `Branch out of range at ${toHex16(location)}`));
+        continue;
+      }
+    }
+
+    location += modeSize(resolved.mode);
+  }
+
+  return diagnostics;
+}
+
+function buildListingOnly(lines: readonly SourceLine[]): ListingLine[] {
+  return lines.map((line) => ({
+    address: line.kind === "code" ? 0 : null,
+    bytes: [],
+    source: line.raw,
+  }));
 }
 
 function sizeLine(line: SourceLine, location: number, symbols: ReadonlyMap<string, number>): SizedLine {
@@ -333,9 +431,7 @@ function encodeInstruction(opcode: number, modeResolution: ModeResolution, locat
     case "indirectIndexed":
       return [opcode, value & 0xff];
     case "relative": {
-      const nextPc = (location + 2) & 0xffff;
-      const delta = ((value & 0xffff) - nextPc) & 0xffff;
-      const signed = delta > 0x7f ? delta - 0x10000 : delta;
+      const signed = computeBranchOffset(value, location);
       if (signed < -128 || signed > 127) {
         throw new Error(`Branch out of range at ${toHex16(location)}`);
       }
@@ -347,6 +443,24 @@ function encodeInstruction(opcode: number, modeResolution: ModeResolution, locat
     case "indirect":
       return [opcode, value & 0xff, (value >> 8) & 0xff];
   }
+}
+
+function computeBranchOffset(target: number, location: number): number {
+  const nextPc = (location + 2) & 0xffff;
+  const delta = ((target & 0xffff) - nextPc) & 0xffff;
+  return delta > 0x7f ? delta - 0x10000 : delta;
+}
+
+function modeNeedsValue(mode: AddressingMode): boolean {
+  return mode !== "implied" && mode !== "accumulator";
+}
+
+function makeDiagnostic(line: SourceLine, message: string): AssemblyDiagnostic {
+  return {
+    lineNumber: line.lineNumber,
+    message,
+    source: line.raw,
+  };
 }
 
 function writeBytes(target: Map<number, number>, address: number, values: readonly number[]): void {
