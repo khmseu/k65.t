@@ -22,13 +22,19 @@ export function formatListingLine(
 
   if (line.bytes.length === 0) {
     // No bytes, just address and source
-    lines.push([address, sourceText].join(" ").trimEnd());
+    lines.push(address + " " + sourceText);
   } else if (line.bytes.length <= bytesPerLine) {
     // All bytes fit on one line
     const byteField = line.bytes
       .map((byte) => byte.toString(16).toUpperCase().padStart(2, "0"))
       .join(" ");
-    lines.push([address, byteField, sourceText].join(" ").trimEnd());
+    // Align source to fixed column (60) for lines with bytes
+    // This ensures the source text starts at consistent position for byte lines
+    const currentWidth = 4 + 1 + byteField.length; // address + space + bytes
+    const targetWidth = 55; // Column where source should start for byte lines
+    const padding = Math.max(1, targetWidth - currentWidth);
+    const line1 = address + " " + byteField + " ".repeat(padding) + sourceText;
+    lines.push(line1.trimEnd());
   } else {
     // Multiple lines needed
     for (let i = 0; i < line.bytes.length; i += bytesPerLine) {
@@ -37,17 +43,19 @@ export function formatListingLine(
         .map((byte) => byte.toString(16).toUpperCase().padStart(2, "0"))
         .join(" ");
 
+      const nextAddr = ((line.address ?? 0) + i) & 0xffff;
+      const nextAddrStr = nextAddr.toString(16).toUpperCase().padStart(4, "0");
+
       if (i === 0) {
         // First line has address and source
-        lines.push([address, byteField, sourceText].join(" ").trimEnd());
+        const currentWidth = 4 + 1 + byteField.length;
+        const targetWidth = 55;
+        const padding = Math.max(1, targetWidth - currentWidth);
+        const firstLine = nextAddrStr + " " + byteField + " ".repeat(padding) + sourceText;
+        lines.push(firstLine.trimEnd());
       } else {
-        // Continuation lines have indented bytes only
-        const nextAddr = ((line.address ?? 0) + i) & 0xffff;
-        const nextAddrStr = nextAddr
-          .toString(16)
-          .toUpperCase()
-          .padStart(4, "0");
-        lines.push([nextAddrStr, byteField].join(" ").trimEnd());
+        // Continuation lines have indented bytes only (no source)
+        lines.push(nextAddrStr + " " + byteField);
       }
     }
   }
