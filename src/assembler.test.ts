@@ -162,3 +162,31 @@ test("assemble reports include read failures as diagnostics", () => {
   assert.equal(result.diagnostics.length, 1);
   assert.equal(result.diagnostics[0]?.code, "E_INCLUDE_READ");
 });
+
+test("assemble supports .align with optional fill value", () => {
+  const source = [
+    ".org $8701",
+    "start .byte $AA",
+    "      .align 4, $FF",
+    "      .byte $55",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0xaa, 0xff, 0xff, 0x55]);
+  assert.equal(result.symbols.find((entry) => entry.name === "START")?.value, 0x8701);
+});
+
+test("assemble reports invalid .align boundary", () => {
+  const source = [
+    ".org $8800",
+    "      .align 0",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.binary.length, 0);
+  assert.equal(result.diagnostics.length, 1);
+  assert.equal(result.diagnostics[0]?.code, "E_DIR_ALIGN_RANGE");
+});

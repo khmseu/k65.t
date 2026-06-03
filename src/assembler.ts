@@ -314,6 +314,51 @@ function collectDiagnostics(lines: readonly SourceLine[], passState: PassState):
       continue;
     }
 
+    if (mnemonic === ".ALIGN") {
+      const boundaryExpr = line.operands[0];
+      if (boundaryExpr === undefined) {
+        diagnostics.push(makeDiagnostic(line, "E_DIR_ALIGN_BOUNDARY", ".align requires a boundary operand"));
+        continue;
+      }
+
+      const boundaryEval = evaluateExpressionDetailed(boundaryExpr, passState.symbols, location);
+      if (boundaryEval.value === null) {
+        diagnostics.push(
+          makeDiagnostic(
+            line,
+            boundaryEval.errorCode ?? "E_EXPR_INVALID",
+            `.align boundary expression error (${boundaryExpr}): ${boundaryEval.error ?? "invalid expression"}`,
+            boundaryEval.errorColumn ?? undefined,
+          ),
+        );
+        continue;
+      }
+
+      const boundary = boundaryEval.value;
+      if (boundary <= 0) {
+        diagnostics.push(makeDiagnostic(line, "E_DIR_ALIGN_RANGE", ".align boundary must be greater than zero"));
+        continue;
+      }
+
+      const fillExpr = line.operands[1];
+      if (fillExpr !== undefined) {
+        const fillEval = evaluateExpressionDetailed(fillExpr, passState.symbols, location);
+        if (fillEval.value === null) {
+          diagnostics.push(
+            makeDiagnostic(
+              line,
+              fillEval.errorCode ?? "E_EXPR_INVALID",
+              `.align fill expression error (${fillExpr}): ${fillEval.error ?? "invalid expression"}`,
+              fillEval.errorColumn ?? undefined,
+            ),
+          );
+        }
+      }
+
+      location += alignPadding(location, boundary);
+      continue;
+    }
+
     const opcodeTable = opcodes[mnemonic];
     if (opcodeTable === undefined) {
       diagnostics.push(makeDiagnostic(line, "E_OPCODE_UNKNOWN", `Unknown mnemonic: ${mnemonic}`));
@@ -449,6 +494,13 @@ function sizeLine(line: SourceLine, location: number, symbols: ReadonlyMap<strin
     return { size, nextAddress: location + size };
   }
 
+  if (mnemonic === ".ALIGN") {
+    const boundaryExpr = line.operands[0];
+    const boundary = boundaryExpr === undefined ? null : evaluateExpression(boundaryExpr, symbols, location);
+    const padding = boundary === null || boundary <= 0 ? 0 : alignPadding(location, boundary);
+    return { size: padding, nextAddress: location + padding };
+  }
+
   const table = opcodes[mnemonic];
   if (table === undefined) {
     return { size: 0, nextAddress: location };
@@ -543,6 +595,20 @@ function emitBinary(lines: readonly SourceLine[], passState: PassState): { binar
       const count = (evaluateExpression(line.operands[0] ?? "0", passState.symbols, location) ?? 0) & 0xffff;
       const value = (evaluateExpression(line.operands[1] ?? "0", passState.symbols, location) ?? 0) & 0xff;
       const emitted = new Array<number>(count).fill(value);
+      writeBytes(bytes, location, emitted);
+      listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
+      if (emitted.length > 0) {
+        minAddress = Math.min(minAddress, location);
+        maxAddress = Math.max(maxAddress, location + emitted.length - 1);
+      }
+      location += emitted.length;
+      continue;
+    }
+
+    if (mnemonic === ".ALIGN") {
+      const boundary = evaluateExpression(line.operands[0] ?? "0", passState.symbols, location) ?? 0;
+      const fillValue = (evaluateExpression(line.operands[1] ?? "0", passState.symbols, location) ?? 0) & 0xff;
+      const emitted = new Array<number>(alignPadding(location, boundary)).fill(fillValue);
       writeBytes(bytes, location, emitted);
       listing.push({ address: location & 0xffff, bytes: emitted, source: line.raw });
       if (emitted.length > 0) {
@@ -724,6 +790,15 @@ function textDirectiveSize(operands: readonly string[]): number {
   }
 
   return size;
+}
+
+function alignPadding(location: number, boundary: number): number {
+  if (boundary <= 0) {
+    return 0;
+  }
+
+  const remainder = location % boundary;
+  return remainder === 0 ? 0 : boundary - remainder;
 }
 
 function parseTextLiteral(operand: string):

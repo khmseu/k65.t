@@ -11,6 +11,7 @@
 - Expand simple macros defined with `.macro name, arg1, arg2` and terminated by `.endmacro`, using `\arg1`-style substitution inside the macro body.
 - Support data directives including `.byte`, `.word`, `.text`, and `.fill`.
 - Support `.include "relative/path.asm"` for source composition.
+- Support `.align boundary[, fill]` for deterministic padding/layout.
 
 ## Recommended VS Code extensions
 
