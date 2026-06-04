@@ -52,6 +52,17 @@ function parseLine(raw: string, lineNumber: number): SourceLine {
     label = firstToken;
     mnemonic = secondToken;
     operands = collectOperands(tokens.slice(2));
+  } else if (
+    tokens.length >= 2 &&
+    isLikelyLabel(firstToken) &&
+    secondToken !== undefined &&
+    isDirectiveOrAssignment(secondToken)
+  ) {
+    // Even if first token looks opcode-like (3 letters), treat it as a label
+    // if the second token is a directive (.equ, .set) or assignment operator (=)
+    label = firstToken;
+    mnemonic = secondToken;
+    operands = collectOperands(tokens.slice(2));
   } else {
     mnemonic = firstToken;
     operands = collectOperands(tokens.slice(1));
@@ -187,4 +198,9 @@ function isLikelyLabel(token: string): boolean {
 
 function isOpcodeLike(token: string): boolean {
   return /^[A-Za-z]{3}$/.test(token);
+}
+
+function isDirectiveOrAssignment(token: string): boolean {
+  const upper = token.toUpperCase();
+  return upper === "=" || upper === ".EQU" || upper === ".SET";
 }

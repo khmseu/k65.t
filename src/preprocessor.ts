@@ -453,22 +453,25 @@ function preprocessLines(
         );
       }
 
-      const selectedBranch = selectConditionalBranch(
+      const selectionResult = selectConditionalBranch(
         branches,
         parsed.lineNumber,
         parsed.raw,
         constants,
       );
-      if (selectedBranch !== undefined) {
-        output.push(...preprocessLines(selectedBranch.lines, context, macros, constants));
-      } else {
+      
+      if (selectionResult === "unevaluatable") {
         // Condition couldn't be evaluated at preprocessing time (e.g., references undefined symbols).
         // Conservatively include all lines from all branches (stripped of .if/.else/.endif).
         // The assembler will see redundant definitions but won't crash or report errors.
         for (const branch of branches) {
           output.push(...preprocessLines(branch.lines, context, macros, constants));
         }
+      } else if (selectionResult !== null) {
+        // selectionResult is a branch object with lines to include
+        output.push(...preprocessLines(selectionResult.lines, context, macros, constants));
       }
+      // else: selectionResult === null means no branch matched and no .else; skip all
       continue;
     }
 
@@ -599,9 +602,12 @@ function selectConditionalBranch(
   lineNumber: number,
   source: string,
   constants: ReadonlyMap<string, number> = new Map(),
-): { condition: string | null; lines: string[] } | undefined {
+): { condition: string | null; lines: string[] } | null | "unevaluatable" {
+  let anyUnevaluatable = false;
+
   for (const branch of branches) {
     if (branch.condition === null) {
+      // This is an .else branch, return it (it matches any remaining case)
       return branch;
     }
 
@@ -612,15 +618,25 @@ function selectConditionalBranch(
     );
     if (evaluation.value === null) {
       // Condition can't be evaluated (unevaluatable symbols, expressions, etc).
-      // Return undefined so the caller can handle this gracefully.
-      // The preprocessor will conservatively include all branches.
-      return undefined;
+      // Mark this and continue checking other branches.
+      anyUnevaluatable = true;
+      continue;
     }
 
     if (evaluation.value !== 0) {
+      // Condition is true, return this branch
       return branch;
     }
+    // Condition is false, continue to next branch
   }
 
-  return undefined;
+  // No branch matched
+  if (anyUnevaluatable) {
+    // At least one branch couldn't be evaluated. Return "unevaluatable" to
+    // indicate the caller should conservatively include all branches.
+    return "unevaluatable";
+  }
+
+  // All conditions evaluated to false and there's no .else branch
+  return null;
 }

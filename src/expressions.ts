@@ -52,7 +52,7 @@ class ExpressionParser {
       };
     }
 
-    const value = this.parseBitwiseOr();
+    const value = this.parseComparison();
     if (value === null) {
       return {
         value: null,
@@ -78,6 +78,74 @@ class ExpressionParser {
       errorCode: null,
       errorColumn: null,
     };
+  }
+
+  private parseComparison(): number | null {
+    let left = this.parseBitwiseOr();
+
+    while (left !== null) {
+      this.skipWhitespace();
+      const startPos = this.position;
+
+      // Try to match comparison operators
+      if (this.consume("==") || this.consume("=")) {
+        const right = this.parseBitwiseOr();
+        if (right === null) {
+          return null;
+        }
+        left = left === right ? 1 : 0;
+        continue;
+      }
+
+      if (this.consume("<>") || this.consume("!=")) {
+        const right = this.parseBitwiseOr();
+        if (right === null) {
+          return null;
+        }
+        left = left !== right ? 1 : 0;
+        continue;
+      }
+
+      if (this.consume("<=")) {
+        const right = this.parseBitwiseOr();
+        if (right === null) {
+          return null;
+        }
+        left = left <= right ? 1 : 0;
+        continue;
+      }
+
+      if (this.consume(">=")) {
+        const right = this.parseBitwiseOr();
+        if (right === null) {
+          return null;
+        }
+        left = left >= right ? 1 : 0;
+        continue;
+      }
+
+      if (this.consume("<")) {
+        const right = this.parseBitwiseOr();
+        if (right === null) {
+          return null;
+        }
+        left = left < right ? 1 : 0;
+        continue;
+      }
+
+      if (this.consume(">")) {
+        const right = this.parseBitwiseOr();
+        if (right === null) {
+          return null;
+        }
+        left = left > right ? 1 : 0;
+        continue;
+      }
+
+      break;
+    }
+
+    return left;
   }
 
   private parseBitwiseOr(): number | null {
