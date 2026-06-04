@@ -6,6 +6,22 @@ import { parseSource } from "./parser.js";
 const MAX_EXPANSION_DEPTH = 25;
 const MAX_INCLUDE_DEPTH = 32;
 
+/**
+ * Preprocessor: Minimal structural preprocessing before main assembly.
+ * 
+ * Role (after Phase 5 refactoring):
+ * - Structural composition: .INCLUDE recursion and file inclusion
+ * - Macro management: Collect .MACRO definitions for later expansion
+ * - Repetition expansion: Expand .REPEAT blocks (multi-pass sizing consideration)
+ * - Constant collection: Extract numeric constants for .REPEAT count evaluation
+ * 
+ * NOT handled here (moved to main assembly loop via DirectiveStack):
+ * - Conditional branch selection (.IF/.ELSEIF/.ELSE/.ENDIF)
+ *   These are now evaluated with live symbol table during sizing/emission
+ * 
+ * This separation enables cleaner control flow and better symbol resolution.
+ */
+
 interface MacroDefinition {
   readonly name: string;
   readonly parameters: readonly string[];
@@ -78,13 +94,15 @@ interface IncludeContext {
 }
 
 /**
- * First pass: collect constants from the entire source tree.
- * This enables .if directives to reference any top-level constant,
- * regardless of declaration order or location in the file.
- * Patterns recognized:
- * - Simple assignment: VAR = VALUE or LABEL: VAR = VALUE format
- * - EQU directive: VAR .equ VALUE (numeric only for now)
- * - SET directive: VAR .set VALUE (numeric only for now)
+ * First pass: collect numeric constants from the source.
+ * 
+ * Extracts only numeric literals (not complex expressions) to avoid dependency
+ * ordering issues. These constants are used for:
+ * - .REPEAT count evaluation (needs to happen at preprocess time)
+ * - Forward symbol resolution in expressions
+ * 
+ * Note: .IF condition evaluation has moved to the main assembly loop,
+ * so constants here are primarily for .REPEAT expansion.
  */
 function collectConstants(lines: readonly string[]): Map<string, number> {
   const constants = new Map<string, number>();
@@ -156,6 +174,16 @@ function collectConstants(lines: readonly string[]): Map<string, number> {
   return constants;
 }
 
+/**
+ * Recursive line processing: structural composition and macro/repeat expansion.
+ * 
+ * Handles:
+ * - .INCLUDE: Recursively includes and preprocesses external files
+ * - .MACRO / .ENDMACRO: Collects macro definitions for later expansion
+ * - .REPEAT / .ENDREPEAT: Expands repetition blocks (needed for multi-pass sizing)
+ * - .IF / .ELSEIF / .ELSE / .ENDIF: Passes through unchanged (handled in main loop)
+ * - Macro expansion: Substitutes macro invocations with body
+ */
 function preprocessLines(
   lines: readonly string[],
   context: IncludeContext,
@@ -529,48 +557,4 @@ function parseIncludePath(operand: string): string | null {
   }
 
   return trimmed.slice(1, -1);
-}
-
-function selectConditionalBranch(
-  branches: ReadonlyArray<{ condition: string | null; lines: string[] }>,
-  lineNumber: number,
-  source: string,
-  constants: ReadonlyMap<string, number> = new Map(),
-): { condition: string | null; lines: string[] } | null | "unevaluatable" {
-  let anyUnevaluatable = false;
-
-  for (const branch of branches) {
-    if (branch.condition === null) {
-      // This is an .else branch, return it (it matches any remaining case)
-      return branch;
-    }
-
-    const evaluation = evaluateExpressionDetailed(
-      branch.condition,
-      constants,
-      0,
-    );
-    if (evaluation.value === null) {
-      // Condition can't be evaluated (unevaluatable symbols, expressions, etc).
-      // Mark this and continue checking other branches.
-      anyUnevaluatable = true;
-      continue;
-    }
-
-    if (evaluation.value !== 0) {
-      // Condition is true, return this branch
-      return branch;
-    }
-    // Condition is false, continue to next branch
-  }
-
-  // No branch matched
-  if (anyUnevaluatable) {
-    // At least one branch couldn't be evaluated. Return "unevaluatable" to
-    // indicate the caller should conservatively include all branches.
-    return "unevaluatable";
-  }
-
-  // All conditions evaluated to false and there's no .else branch
-  return null;
 }
