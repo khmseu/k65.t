@@ -35,7 +35,12 @@ export function formatListingLine(
       .map((byte) => byte.toString(16).toUpperCase().padStart(2, "0"))
       .join(" ");
     // Pad bytes field to fixed width
-    const paddedBytes = byteField.padEnd(maxBytesWidth);
+    let paddedBytes = byteField.padEnd(maxBytesWidth);
+    if (bytesPerLine > 3 && line.target !== undefined) {
+      // If there's a target, right-align it in the bytes field (overlapping last 4 chars)
+      const targetStr = line.target.toString(16).toUpperCase().padStart(4, "0");
+      paddedBytes = paddedBytes.substring(0, maxBytesWidth - 4) + targetStr;
+    }
     const line1 = address + " " + paddedBytes + " " + sourceText;
     lines.push(line1.trimEnd());
   } else {

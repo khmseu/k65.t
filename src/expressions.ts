@@ -490,6 +490,12 @@ class ExpressionParser {
       return Number.parseInt(hex0x[1], 16);
     }
 
+    const oct0o = rest.match(/^0o([0-7]+)/i);
+    if (oct0o?.[1] !== undefined) {
+      this.position += oct0o[0].length;
+      return Number.parseInt(oct0o[1], 8);
+    }
+
     const binary = rest.match(/^%([01]+)/);
     if (binary?.[1] !== undefined) {
       this.position += binary[0].length;

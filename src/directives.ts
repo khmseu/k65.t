@@ -9,7 +9,7 @@ export interface DirectiveMetadata {
   readonly name: string;
 
   /** Alternative names/aliases for the same directive (e.g., [".SET", "="] for assignment) */
-  readonly aliases?: readonly string[];
+  //   readonly aliases?: readonly string[];
 
   /**
    * Execution phase:
@@ -127,7 +127,7 @@ export const DIRECTIVE_TABLE: Record<string, DirectiveMetadata> = {
   // Assembly directives (assignment/constants)
   ".EQU": {
     name: ".EQU",
-    aliases: [".SET", "="],
+    // aliases: [".SET", "="],
     phase: "assembly",
     category: "assignment",
     operandCount: 1,
@@ -136,7 +136,16 @@ export const DIRECTIVE_TABLE: Record<string, DirectiveMetadata> = {
 
   ".SET": {
     name: ".SET",
-    aliases: ["="],
+    // aliases: ["="],
+    phase: "assembly",
+    category: "assignment",
+    operandCount: 1,
+    description: "Define reassignable constant (label .set value)",
+  },
+
+  "=": {
+    name: ".SET",
+    // aliases: ["="],
     phase: "assembly",
     category: "assignment",
     operandCount: 1,
@@ -205,7 +214,7 @@ export const DIRECTIVE_TABLE: Record<string, DirectiveMetadata> = {
 
   ".PAGE": {
     name: ".PAGE",
-    aliases: [".EJECT"],
+    // aliases: [".EJECT"],
     phase: "assembly",
     category: "metadata",
     operandCount: 0,

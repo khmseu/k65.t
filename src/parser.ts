@@ -1,5 +1,6 @@
+import { getDirectiveMetadata, isDirective } from "./directives.js";
+
 import type { SourceLine } from "./types.js";
-import { isDirective } from "./directives.js";
 import { opcodes } from "./opcodes.js";
 
 const commentOnlyPattern = /^\s*(?:[;*].*)?$/;
@@ -219,7 +220,5 @@ function isKnownMnemonic(token: string): boolean {
  */
 function isDirectiveOrAssignment(token: string): boolean {
   const upper = token.toUpperCase();
-  return (
-    upper === "=" || upper === ".EQU" || upper === ".SET" || isDirective(upper)
-  );
+  return isDirective(upper);
 }

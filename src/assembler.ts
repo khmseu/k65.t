@@ -9,7 +9,7 @@ import {
   opcodes,
   type AddressingMode,
 } from "./opcodes.js";
-import { isDirective } from "./directives.js";
+import { getDirectiveMetadata, isDirective } from "./directives.js";
 import { PreprocessError, preprocessSource } from "./preprocessor.js";
 import { DirectiveStack } from "./directive-stack.js";
 import { directiveAwareIteration } from "./directive-iterator.js";
@@ -1373,9 +1373,11 @@ function emitBinary(
     }
 
     if (isAssignmentDirective(mnemonic)) {
+      const resolved = passState.symbols.get(line.label?.toUpperCase() ?? "");
       const listingLine: ListingLine = {
         address: location & 0xffff,
         bytes: [],
+        target: resolved,
         source: line.raw,
         ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
         ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
@@ -1647,10 +1649,11 @@ function emitBinary(
     }
 
     const emitted = encodeInstructionNoThrow(opcode, resolved);
-    writeBytes(bytes, location, emitted);
+    writeBytes(bytes, location, emitted.bytes);
     const listingLine: ListingLine = {
       address: location & 0xffff,
-      bytes: emitted,
+      bytes: emitted.bytes,
+      target: emitted.target,
       source: line.raw,
       ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
       ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
@@ -1661,8 +1664,8 @@ function emitBinary(
     pendingPageBreak = false;
     listing.push(listingLine);
     minAddress = Math.min(minAddress, location);
-    maxAddress = Math.max(maxAddress, location + emitted.length - 1);
-    location += emitted.length;
+    maxAddress = Math.max(maxAddress, location + emitted.bytes.length - 1);
+    location += emitted.bytes.length;
   }
 
   if (
@@ -1693,7 +1696,7 @@ function emitBinary(
     try {
       return encodeInstruction(opcode, resolved, location);
     } catch (error) {
-      return [];
+      return { bytes: [] };
     }
   }
 }
@@ -1823,24 +1826,17 @@ function normalizeMnemonic(mnemonic: string | undefined): string | undefined {
 }
 
 function isAssignmentDirective(mnemonic: string | undefined): boolean {
-  return mnemonic === ".EQU" || mnemonic === ".SET" || mnemonic === "=";
+  const meta = getDirectiveMetadata(mnemonic ?? "");
+  return meta?.category === "assignment";
 }
 
 function isListingDirective(mnemonic: string | undefined): boolean {
-  return (
-    mnemonic === ".LIST" ||
-    mnemonic === ".NOLIST" ||
-    mnemonic === ".PAGE" ||
-    mnemonic === ".EJECT" ||
-    mnemonic === ".TITLE" ||
-    mnemonic === ".SUBTTL" ||
-    mnemonic === ".PAGESIZE" ||
-    mnemonic === ".BYTESPERLINE"
-  );
+  const meta = getDirectiveMetadata(mnemonic ?? "");
+  return meta?.category === "metadata";
 }
 
 function assignmentDirectiveName(mnemonic: string): string {
-  return mnemonic === "=" ? "=" : mnemonic.toLowerCase();
+  return mnemonic.toLowerCase();
 }
 
 function assignmentLabelCode(mnemonic: string): string {
@@ -1918,32 +1914,32 @@ function encodeInstruction(
   opcode: number,
   modeResolution: ModeResolution,
   location: number,
-): number[] {
+): { bytes: number[]; target?: number } {
   const value = modeResolution.value ?? 0;
 
   switch (modeResolution.mode) {
     case "implied":
     case "accumulator":
-      return [opcode];
+      return { bytes: [opcode] };
     case "immediate":
     case "zeropage":
     case "zeropageX":
     case "zeropageY":
     case "indexedIndirect":
     case "indirectIndexed":
-      return [opcode, value & 0xff];
+      return { bytes: [opcode, value & 0xff] };
     case "relative": {
       const signed = computeBranchOffset(value, location);
       if (signed < -128 || signed > 127) {
         throw new Error(`Branch out of range at ${toHex16(location)}`);
       }
-      return [opcode, signed & 0xff];
+      return { bytes: [opcode, signed & 0xff], target: value & 0xffff };
     }
     case "absolute":
     case "absoluteX":
     case "absoluteY":
     case "indirect":
-      return [opcode, value & 0xff, (value >> 8) & 0xff];
+      return { bytes: [opcode, value & 0xff, (value >> 8) & 0xff] };
   }
 }
 

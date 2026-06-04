@@ -13,6 +13,7 @@ export interface SourceLine {
 export interface ListingLine {
   readonly address: number | null;
   readonly bytes: readonly number[];
+  readonly target?: number | undefined;
   readonly source: string;
   readonly title?: string;
   readonly subtitle?: string;
