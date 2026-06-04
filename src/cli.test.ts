@@ -1,6 +1,7 @@
-import test from "node:test";
-import assert from "node:assert/strict";
 import { parseCliArgs, resolveOutputPaths } from "./cli.js";
+
+import assert from "node:assert/strict";
+import test from "node:test";
 
 test("parseCliArgs uses default output naming when no flags are provided", () => {
   const parsed = parseCliArgs(["program.asm"]);

@@ -177,9 +177,7 @@ export class DirectiveStack {
       (frame as any).currentIteration++;
     }
 
-    return (
-      frame.currentIteration! < frame.repeatCount!
-    );
+    return frame.currentIteration! < frame.repeatCount!;
   }
 
   /**

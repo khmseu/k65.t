@@ -1,6 +1,6 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { opcodes } from "./opcodes.js";
+import test from "node:test";
 
 test("opcode table matches the official NMOS 6502 instruction set", () => {
   const expected = {

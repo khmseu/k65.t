@@ -219,5 +219,7 @@ function isKnownMnemonic(token: string): boolean {
  */
 function isDirectiveOrAssignment(token: string): boolean {
   const upper = token.toUpperCase();
-  return upper === "=" || upper === ".EQU" || upper === ".SET" || isDirective(upper);
+  return (
+    upper === "=" || upper === ".EQU" || upper === ".SET" || isDirective(upper)
+  );
 }

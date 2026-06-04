@@ -1,9 +1,9 @@
 /**
  * Directive-aware line iteration for the main assembly loop.
- * 
+ *
  * This module provides utilities for iterating through source lines while respecting
  * directive control flow (.if, .repeat, .macro) using the DirectiveStack.
- * 
+ *
  * Instead of expanding all directives in preprocessing, the main assembly loop
  * uses these iterators to decide which lines to process, enabling proper symbol
  * resolution before branch evaluation and other improvements.
@@ -16,7 +16,10 @@ import { evaluateExpressionDetailed } from "./expressions.js";
 
 export interface LineIteratorOptions {
   /** Macro definitions (from preprocessing) */
-  readonly macros?: Map<string, { parameters: readonly string[]; body: string[] }>;
+  readonly macros?: Map<
+    string,
+    { parameters: readonly string[]; body: string[] }
+  >;
 
   /** Constants for .if condition evaluation */
   readonly constants?: Map<string, number>;
@@ -30,13 +33,13 @@ export interface LineIteratorOptions {
 
 /**
  * Iterate through source lines while respecting directive control flow.
- * 
+ *
  * This generator yields individual lines with associated context (whether to process,
  * whether we're in an active branch, etc). It handles:
  * - .IF/.ELSEIF/.ELSE/.ENDIF branching
  * - .REPEAT/.ENDREPEAT looping
  * - Macro expansion (future)
- * 
+ *
  * Usage:
  * ```typescript
  * for (const { line, shouldProcess, lineIndex } of directiveAwareIteration(lines, stack, options)) {
@@ -69,7 +72,7 @@ export interface LineIterationItem {
 
 /**
  * Generator that yields lines while respecting the directive stack.
- * 
+ *
  * This is the core of the new assembly approach:
  * Instead of the preprocessor expanding all directives upfront,
  * the main assembly loop uses this iterator to selectively process lines
@@ -184,10 +187,7 @@ export function* directiveAwareIteration(
     } else if (mnemonic === ".ENDREPEAT") {
       // Check if we should loop again
       const frame = stack.peek();
-      if (
-        frame?.type === "repeat" &&
-        stack.nextIteration()
-      ) {
+      if (frame?.type === "repeat" && stack.nextIteration()) {
         // Loop again
         yield {
           line,

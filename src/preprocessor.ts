@@ -1,24 +1,25 @@
-import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+
 import { evaluateExpressionDetailed } from "./expressions.js";
 import { parseSource } from "./parser.js";
+import { readFileSync } from "node:fs";
 
 const MAX_EXPANSION_DEPTH = 25;
 const MAX_INCLUDE_DEPTH = 32;
 
 /**
  * Preprocessor: Minimal structural preprocessing before main assembly.
- * 
+ *
  * Role (after Phase 5 refactoring):
  * - Structural composition: .INCLUDE recursion and file inclusion
  * - Macro management: Collect .MACRO definitions for later expansion
  * - Repetition expansion: Expand .REPEAT blocks (multi-pass sizing consideration)
  * - Constant collection: Extract numeric constants for .REPEAT count evaluation
- * 
+ *
  * NOT handled here (moved to main assembly loop via DirectiveStack):
  * - Conditional branch selection (.IF/.ELSEIF/.ELSE/.ENDIF)
  *   These are now evaluated with live symbol table during sizing/emission
- * 
+ *
  * This separation enables cleaner control flow and better symbol resolution.
  */
 
@@ -95,12 +96,12 @@ interface IncludeContext {
 
 /**
  * First pass: collect numeric constants from the source.
- * 
+ *
  * Extracts only numeric literals (not complex expressions) to avoid dependency
  * ordering issues. These constants are used for:
  * - .REPEAT count evaluation (needs to happen at preprocess time)
  * - Forward symbol resolution in expressions
- * 
+ *
  * Note: .IF condition evaluation has moved to the main assembly loop,
  * so constants here are primarily for .REPEAT expansion.
  */
@@ -176,7 +177,7 @@ function collectConstants(lines: readonly string[]): Map<string, number> {
 
 /**
  * Recursive line processing: structural composition and macro/repeat expansion.
- * 
+ *
  * Handles:
  * - .INCLUDE: Recursively includes and preprocesses external files
  * - .MACRO / .ENDMACRO: Collects macro definitions for later expansion
@@ -416,8 +417,7 @@ function preprocessLines(
         if (
           nesting === 0 &&
           bodyParsed.kind === "code" &&
-          (bodyMnemonic === ".ELSEIF" ||
-            bodyMnemonic === ".ELSE")
+          (bodyMnemonic === ".ELSEIF" || bodyMnemonic === ".ELSE")
         ) {
           output.push(bodyLine);
           continue;

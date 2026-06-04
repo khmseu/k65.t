@@ -134,7 +134,6 @@ export function formatListing(
     }
   }
 
-
   for (let i = 0; i < lines.length; i++) {
     if (skipped.has(i)) {
       continue; // Skip lines already processed

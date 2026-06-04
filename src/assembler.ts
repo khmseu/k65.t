@@ -155,12 +155,12 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
 
     for (const line of lines) {
       const mnemonic = normalizeMnemonic(line.mnemonic);
-      
+
       // Handle .IF directive: evaluate condition and push frame
       if (line.kind === "code" && mnemonic === ".IF") {
         const conditionOperand = line.operands[0];
         let isActive = false;
-        
+
         if (conditionOperand !== undefined) {
           const evaluation = evaluateExpressionDetailed(
             conditionOperand,
@@ -169,20 +169,22 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
           );
           isActive = (evaluation.value ?? 0) !== 0;
         }
-        
+
         const ifFrame: any = {
           type: "if",
           depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
           startLineNumber: line.lineNumber ?? 0,
-          branches: [{
-            condition: conditionOperand ?? "",
-            lines: [],
-          }],
+          branches: [
+            {
+              condition: conditionOperand ?? "",
+              lines: [],
+            },
+          ],
           activeBranchIndex: isActive ? 0 : null,
-          currentBranchIndex: 0,  // Track which branch we're currently in
+          currentBranchIndex: 0, // Track which branch we're currently in
         };
         stack.push(ifFrame);
-        
+
         lineSymbols.push(new Map(nextSymbols));
         lineScopes.push(currentScope);
         lineSizes.push(0);
@@ -195,9 +197,12 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
           const frame = stack.peek()!;
           const ifFrame = frame as any;
           const conditionOperand = line.operands[0];
-          
+
           let isActive = false;
-          if (conditionOperand !== undefined && ifFrame.activeBranchIndex === null) {
+          if (
+            conditionOperand !== undefined &&
+            ifFrame.activeBranchIndex === null
+          ) {
             const evaluation = evaluateExpressionDetailed(
               conditionOperand,
               nextSymbols,
@@ -205,20 +210,20 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
             );
             isActive = (evaluation.value ?? 0) !== 0;
           }
-          
+
           // Move to next branch
           ifFrame.currentBranchIndex = ifFrame.branches.length;
-          
+
           if (ifFrame.activeBranchIndex === null && isActive) {
             ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
           }
-          
+
           ifFrame.branches.push({
             condition: conditionOperand ?? "",
             lines: [],
           });
         }
-        
+
         lineSymbols.push(new Map(nextSymbols));
         lineScopes.push(currentScope);
         lineSizes.push(0);
@@ -230,20 +235,20 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
         if (!stack.isEmpty() && stack.peek()!.type === "if") {
           const frame = stack.peek()!;
           const ifFrame = frame as any;
-          
+
           // Move to next branch (.else is always the final branch)
           ifFrame.currentBranchIndex = ifFrame.branches.length;
-          
+
           if (ifFrame.activeBranchIndex === null) {
             ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
           }
-          
+
           ifFrame.branches.push({
             condition: null,
             lines: [],
           });
         }
-        
+
         lineSymbols.push(new Map(nextSymbols));
         lineScopes.push(currentScope);
         lineSizes.push(0);
@@ -255,7 +260,7 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
         if (!stack.isEmpty() && stack.peek()!.type === "if") {
           stack.pop();
         }
-        
+
         lineSymbols.push(new Map(nextSymbols));
         lineScopes.push(currentScope);
         lineSizes.push(0);
@@ -955,7 +960,7 @@ function emitBinary(
     if (mnemonic === ".IF") {
       const conditionOperand = line.operands[0];
       let isActive = false;
-      
+
       if (conditionOperand !== undefined) {
         const evaluation = evaluateExpressionDetailed(
           conditionOperand,
@@ -964,20 +969,22 @@ function emitBinary(
         );
         isActive = (evaluation.value ?? 0) !== 0;
       }
-      
+
       const ifFrame: any = {
         type: "if",
         depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
         startLineNumber: line.lineNumber ?? 0,
-        branches: [{
-          condition: conditionOperand ?? "",
-          lines: [],
-        }],
+        branches: [
+          {
+            condition: conditionOperand ?? "",
+            lines: [],
+          },
+        ],
         activeBranchIndex: isActive ? 0 : null,
-        currentBranchIndex: 0,  // Track which branch we're currently in
+        currentBranchIndex: 0, // Track which branch we're currently in
       };
       stack.push(ifFrame);
-      
+
       listing.push({
         address: null,
         bytes: [],
@@ -992,9 +999,12 @@ function emitBinary(
         const frame = stack.peek()!;
         const ifFrame = frame as any;
         const conditionOperand = line.operands[0];
-        
+
         let isActive = false;
-        if (conditionOperand !== undefined && ifFrame.activeBranchIndex === null) {
+        if (
+          conditionOperand !== undefined &&
+          ifFrame.activeBranchIndex === null
+        ) {
           const evaluation = evaluateExpressionDetailed(
             conditionOperand,
             symbols,
@@ -1002,20 +1012,20 @@ function emitBinary(
           );
           isActive = (evaluation.value ?? 0) !== 0;
         }
-        
+
         // Move to next branch
         ifFrame.currentBranchIndex = ifFrame.branches.length;
-        
+
         if (ifFrame.activeBranchIndex === null && isActive) {
           ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
         }
-        
+
         ifFrame.branches.push({
           condition: conditionOperand ?? "",
           lines: [],
         });
       }
-      
+
       listing.push({
         address: null,
         bytes: [],
@@ -1029,20 +1039,20 @@ function emitBinary(
       if (!stack.isEmpty() && stack.peek()!.type === "if") {
         const frame = stack.peek()!;
         const ifFrame = frame as any;
-        
+
         // Move to next branch (.else is always the final branch)
         ifFrame.currentBranchIndex = ifFrame.branches.length;
-        
+
         if (ifFrame.activeBranchIndex === null) {
           ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
         }
-        
+
         ifFrame.branches.push({
           condition: null,
           lines: [],
         });
       }
-      
+
       listing.push({
         address: null,
         bytes: [],
@@ -1056,7 +1066,7 @@ function emitBinary(
       if (!stack.isEmpty() && stack.peek()!.type === "if") {
         stack.pop();
       }
-      
+
       listing.push({
         address: null,
         bytes: [],

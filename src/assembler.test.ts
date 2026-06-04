@@ -1,10 +1,11 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { mkdtemp, writeFile, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+
 import { assemble } from "./assembler.js";
+import assert from "node:assert/strict";
 import { formatListing } from "./listing.js";
+import { join } from "node:path";
+import test from "node:test";
+import { tmpdir } from "node:os";
 
 test("assemble supports labels, forward references, directives, and listing format", () => {
   const source = [
@@ -63,7 +64,7 @@ test("assemble expands simple macros before pass resolution", () => {
     0x9000,
   );
   assert.ok(
-    /9000\s+A9\s+01\s+start\s+lda\s+#1/.test(formatListing(result.listing))
+    /9000\s+A9\s+01\s+start\s+lda\s+#1/.test(formatListing(result.listing)),
   );
 });
 
@@ -481,7 +482,7 @@ test("assemble supports nested conditional blocks (3 levels)", () => {
   assert.deepEqual(Array.from(result.binary), [0x11, 0x22, 0x44, 0x77]);
   assert.equal(
     result.symbols.find((entry) => entry.name === "TAIL")?.value,
-    0x8c03,  // 3 bytes emitted (0x11, 0x22, 0x44), tail at offset 3
+    0x8c03, // 3 bytes emitted (0x11, 0x22, 0x44), tail at offset 3
   );
 });
 
@@ -504,7 +505,7 @@ test("assemble handles forward references in conditional expressions", () => {
   assert.deepEqual(Array.from(result.binary), [0x11, 0x33]);
   assert.equal(
     result.symbols.find((entry) => entry.name === "TAIL")?.value,
-    0x8d01,  // 1 byte before tail
+    0x8d01, // 1 byte before tail
   );
 });
 
