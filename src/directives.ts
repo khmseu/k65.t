@@ -260,6 +260,14 @@ export const DIRECTIVE_TABLE: Record<string, DirectiveMetadata> = {
     operandCount: 1,
     description: "Set bytes per line in listing output",
   },
+
+  ".PRINT": {
+    name: ".PRINT",
+    phase: "assembly",
+    category: "metadata",
+    operandCount: "variadic",
+    description: "Output arguments to stdout during assembly",
+  },
 };
 
 /**

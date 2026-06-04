@@ -1611,6 +1611,10 @@ function emitBinary(
         // Reset pending after attaching to directive
         pendingTitle = undefined;
         pendingSubtitle = undefined;
+      } else if (mnemonic === ".PRINT") {
+        // Output arguments to stdout
+        const output = line.operands.join(" ");
+        console.log(output);
       }
       // .LIST and .NOLIST are recognized but don't do anything yet
       listing.push(directiveListingLine);

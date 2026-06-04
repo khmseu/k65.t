@@ -299,6 +299,26 @@ In the listing, this produces:
 8008 08 09
 ```
 
+### `.print arguments...`
+
+Outputs its arguments to stdout during assembly. This directive is useful for debugging, displaying configuration information, or providing feedback during the build process. Arguments are joined with spaces and printed as-is.
+
+Example:
+
+```asm
+.if REALIO == 3
+	.print Configuration: COMMODORE platform selected
+	DISKO = 1
+	RAMLOC = $0400
+.endif
+```
+
+When assembling with `REALIO = 3`, the output would be:
+
+```
+Configuration: COMMODORE platform selected
+```
+
 ## Source format notes
 
 - A line may contain an optional label, an opcode or directive, comma-separated operands, and an optional semicolon comment.
