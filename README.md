@@ -319,6 +319,101 @@ When assembling with `REALIO = 3`, the output would be:
 Configuration: COMMODORE platform selected
 ```
 
+## Expressions
+
+Expressions are used in directives and addressing modes to compute values. All expressions evaluate to 16-bit unsigned integers (0–65535).
+
+### Numeric Literals
+
+| Format | Example | Result |
+|--------|---------|--------|
+| Decimal | `1000` | 1000 |
+| Hexadecimal ($) | `$3E8` | 1000 |
+| Hexadecimal (0x) | `0x3E8` | 1000 |
+| Octal (0o) | `0o1750` | 1000 |
+| Binary (%) | `%1111101000` | 1000 |
+
+### Primitives
+
+| Primitive | Description | Example |
+|-----------|-------------|---------|
+| `*` | Current program counter location | `JMP *` (infinite loop) |
+| `symbol` | Reference to a label or constant | `LDA START` |
+| String literal | Single character in quotes | `'A'` = 65, `"\n"` = 10 |
+
+String escape sequences: `\n` (newline = 0x0A), `\r` (carriage return = 0x0D), `\t` (tab = 0x09), `\\` (backslash), `\"` (quote), `\'` (apostrophe), `\xHH` (hex byte).
+
+### Operators
+
+#### Unary Operators (right-associative)
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `+value` | Unary plus (no-op) | `+$100` = 256 |
+| `-value` | Negation (two's complement) | `-1` = 65535 |
+| `~value` | Bitwise NOT | `~0` = 65535 |
+| `!value` | Logical NOT (0→1, nonzero→0) | `!0` = 1, `!5` = 0 |
+| `<value` | Low byte (mask with 0xFF) | `<$1234` = 0x34 |
+| `>value` | High byte (shift right 8, mask) | `>$1234` = 0x12 |
+
+#### Binary Operators (left-associative, listed by precedence)
+
+| Operator | Precedence | Description | Example |
+|----------|------------|-------------|---------|
+| `*` | Highest | Multiplication | `2*3` = 6 |
+| `/` | | Integer division | `7/2` = 3 |
+| `%` | | Modulo (remainder) | `7%3` = 1 |
+| `+` | | Addition | `1+2` = 3 |
+| `-` | | Subtraction | `5-2` = 3 |
+| `&` | | Bitwise AND | `$0F & $F0` = 0 |
+| `^` | | Bitwise XOR | `$0F ^ $F0` = 255 |
+| `\|` | | Bitwise OR | `$0F \| $F0` = 255 |
+| `==` | | Equality (1 if true, 0 if false) | `1==1` = 1 |
+| `=` | | Equality (alternative syntax) | `1=1` = 1 |
+| `!=` | | Not equal | `1!=2` = 1 |
+| `<>` | | Not equal (alternative syntax) | `1<>2` = 1 |
+| `<` | Lowest | Less than | `1<2` = 1 |
+| `>` | | Greater than | `2>1` = 1 |
+| `<=` | | Less than or equal | `1<=2` = 1 |
+| `>=` | | Greater than or equal | `2>=1` = 1 |
+
+### Examples
+
+```asm
+; Numeric literals
+.byte $FF           ; Hex: 255
+.byte 0o377         ; Octal: 255
+.byte %11111111     ; Binary: 255
+.byte 255           ; Decimal: 255
+
+; Current location
+START: LDA #0
+       BNE START    ; Branch target is current PC
+
+; Symbol references
+PI = $3.14          ; Error: invalid format, use integer
+TWOPI = PI*2        ; Error: PI is not defined yet
+
+MODE = 3
+.if MODE==3
+  DISKO = 1
+.endif
+
+; Byte selectors
+.word $1234         ; 16-bit value
+.byte >$1234        ; High byte: $12
+.byte <$1234        ; Low byte: $34
+
+; Bitwise operations
+MASK = $FF00 & $00FF  ; Result: 0
+VALUE = $0F | $F0     ; Result: $FF
+TOGGLE = $AA ^ $55    ; Result: $FF
+
+; Complex expressions with operators
+SIZE = 256 * 4 - 10   ; Result: 1014
+ADDR = BASE + (OFFSET / 2)
+```
+
 ## Source format notes
 
 - A line may contain an optional label, an opcode or directive, comma-separated operands, and an optional semicolon comment.
@@ -327,4 +422,4 @@ Configuration: COMMODORE platform selected
 - Reassignable labels use `.set` or `=` and are resolved sequentially, so each reassignment only affects later lines.
 - Pure comment lines may start with `;` or `*`.
 - Blank lines are accepted.
-- Expressions currently support numeric literals, symbols, `*` for current location, single-character string literals (`'A'`, `"\n"`, `'\x41'`), parentheses, unary `+`, unary `-`, unary `~`, unary `<` (low byte), unary `>` (high byte), arithmetic `+ - * / %`, and bitwise `& ^ |`.
+- See the **Expressions** section above for details on operators, primitives, and numeric literals.
