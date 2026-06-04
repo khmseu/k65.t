@@ -10,7 +10,7 @@ export function parseSource(text: string): SourceLine[] {
   return lines.map((raw, index) => parseLine(raw, index + 1));
 }
 
-function parseLine(raw: string, lineNumber: number): SourceLine {
+export function parseLine(raw: string, lineNumber: number): SourceLine {
   const trimmed = raw.trim();
 
   if (trimmed.length === 0) {

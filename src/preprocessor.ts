@@ -1,7 +1,7 @@
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { evaluateExpressionDetailed } from "./expressions.js";
-import { parseSource } from "./parser.js";
+import { parseLine, parseSource } from "./parser.js";
 import { readFileSync } from "node:fs";
 
 const MAX_EXPANSION_DEPTH = 25;
@@ -190,12 +190,14 @@ function preprocessLines(
   context: IncludeContext,
   macros: Map<string, MacroDefinition>,
   constants: Map<string, number> = new Map(),
+  startLineNumber: number = 1,
 ): string[] {
   const output: string[] = [];
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]!;
-    const parsed = parseSource(line)[0]!;
+    const lineNumber = startLineNumber + i;
+    const parsed = parseLine(line, lineNumber);
     const mnemonic = parsed.mnemonic?.toUpperCase();
 
     if (parsed.kind === "code" && mnemonic === ".INCLUDE") {
@@ -284,7 +286,8 @@ function preprocessLines(
 
       for (i += 1; i < lines.length; i += 1) {
         const bodyLine = lines[i]!;
-        const bodyParsed = parseSource(bodyLine)[0]!;
+        const bodyLineNumber = startLineNumber + i;
+        const bodyParsed = parseLine(bodyLine, bodyLineNumber);
         if (
           bodyParsed.kind === "code" &&
           bodyParsed.mnemonic?.toUpperCase() === ".ENDMACRO"
@@ -349,7 +352,8 @@ function preprocessLines(
 
       for (i += 1; i < lines.length; i += 1) {
         const bodyLine = lines[i]!;
-        const bodyParsed = parseSource(bodyLine)[0]!;
+        const bodyLineNumber = startLineNumber + i;
+        const bodyParsed = parseLine(bodyLine, bodyLineNumber);
         const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
 
         if (bodyParsed.kind === "code" && bodyMnemonic === ".REPEAT") {
@@ -393,7 +397,8 @@ function preprocessLines(
 
       for (i += 1; i < lines.length; i += 1) {
         const bodyLine = lines[i]!;
-        const bodyParsed = parseSource(bodyLine)[0]!;
+        const bodyLineNumber = startLineNumber + i;
+        const bodyParsed = parseLine(bodyLine, bodyLineNumber);
         const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
 
         if (bodyParsed.kind === "code" && bodyMnemonic === ".IF") {
