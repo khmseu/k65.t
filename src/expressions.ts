@@ -296,6 +296,11 @@ class ExpressionParser {
       return value === null ? null : ~value & 0xffff;
     }
 
+    if (this.consume("!")) {
+      const value = this.parseUnary();
+      return value === null ? null : Number(!value) & 0xffff;
+    }
+
     if (this.consume("<")) {
       const value = this.parseUnary();
       return value === null ? null : value & 0xff;

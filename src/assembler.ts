@@ -1389,7 +1389,7 @@ function emitBinary(
       const listingLine: ListingLine = {
         address: location & 0xffff,
         bytes: [],
-        target: resolved || undefined,
+        target: resolved === null ? undefined : resolved,
         source: line.raw,
         ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
         ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
