@@ -77,7 +77,15 @@ export function assemble(
 
   const sized = runSizingPasses(parsed);
   diagnostics = diagnostics.concat(collectDiagnostics(parsed, sized));
-  const emitted = emitBinary(parsed, sized);
+  const emitted =
+    diagnostics.length === 0
+      ? emitBinary(parsed, sized)
+      : {
+          binary: new Uint8Array(),
+          listing: buildListingOnly(parsed, sized),
+          bytesPerLine: 16,
+          pageSize: 0,
+        };
   const symbols: SymbolEntry[] = Array.from(sized.symbols.entries())
     .map(([name, value]) => ({ name: displaySymbolName(name), value }))
     .sort((left, right) => left.name.localeCompare(right.name));
