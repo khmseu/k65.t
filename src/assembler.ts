@@ -60,7 +60,8 @@ export function assemble(
   sourceText: string,
   options: AssembleOptions = {},
 ): AssemblyResult {
-  let preprocessed: string;
+  let preprocessed: string = "";
+  let diagnostics: AssemblyDiagnostic[] = [];
   try {
     preprocessed = preprocessSource(sourceText, {
       ...(options.sourcePath !== undefined
@@ -69,31 +70,14 @@ export function assemble(
       ...(options.readFile !== undefined ? { readFile: options.readFile } : {}),
     });
   } catch (error) {
-    const diagnostic = mapPreprocessError(error);
-    return {
-      binary: new Uint8Array(),
-      listing: [],
-      symbols: [],
-      startAddress: 0,
-      diagnostics: [diagnostic],
-      bytesPerLine: 16,
-      pageSize: 0,
-    };
+    diagnostics = [mapPreprocessError(error)];
   }
 
   const parsed = parseSource(preprocessed);
 
   const sized = runSizingPasses(parsed);
-  const diagnostics = collectDiagnostics(parsed, sized);
-  const emitted =
-    diagnostics.length === 0
-      ? emitBinary(parsed, sized)
-      : {
-          binary: new Uint8Array(),
-          listing: buildListingOnly(parsed, sized),
-          bytesPerLine: 16,
-          pageSize: 0,
-        };
+  diagnostics = diagnostics.concat(collectDiagnostics(parsed, sized));
+  const emitted = emitBinary(parsed, sized);
   const symbols: SymbolEntry[] = Array.from(sized.symbols.entries())
     .map(([name, value]) => ({ name: displaySymbolName(name), value }))
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -1631,7 +1615,7 @@ function emitBinary(
       continue;
     }
 
-    const emitted = encodeInstruction(opcode, resolved, location);
+    const emitted = encodeInstructionNoThrow(opcode, resolved);
     writeBytes(bytes, location, emitted);
     const listingLine: ListingLine = {
       address: location & 0xffff,
@@ -1673,6 +1657,14 @@ function emitBinary(
     bytesPerLine: config.bytesPerLine,
     pageSize: config.pageSize,
   };
+
+  function encodeInstructionNoThrow(opcode: number, resolved: ModeResolution) {
+    try {
+      return encodeInstruction(opcode, resolved, location);
+    } catch (error) {
+      return [];
+    }
+  }
 }
 
 function resolveMode(
