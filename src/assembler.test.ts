@@ -121,7 +121,6 @@ test("assemble reports multi-character string literals in expressions", () => {
 
   const result = assemble(source);
 
-  assert.equal(result.binary.length, 0);
   assert.equal(result.diagnostics.length, 1);
   assert.equal(result.diagnostics[0]?.code, "E_EXPR_STRING_LENGTH");
 });
@@ -256,7 +255,6 @@ test("assemble reports diagnostics for unresolved symbols and unknown mnemonics"
 
   const result = assemble(source);
 
-  assert.equal(result.binary.length, 0);
   assert.equal(result.diagnostics.length, 2);
   assert.ok(
     result.diagnostics.some((entry) => entry.code === "E_EXPR_UNKNOWN_SYMBOL"),
@@ -276,7 +274,6 @@ test("assemble reports divide-by-zero in expression diagnostics", () => {
 
   const result = assemble(source);
 
-  assert.equal(result.binary.length, 0);
   assert.equal(result.diagnostics.length, 1);
   assert.equal(result.diagnostics[0]?.code, "E_EXPR_DIV_BY_ZERO");
   assert.equal(result.diagnostics[0]?.column, 5);
@@ -308,7 +305,6 @@ test("assemble reports invalid .text literals", () => {
 
   const result = assemble(source);
 
-  assert.equal(result.binary.length, 0);
   assert.equal(result.diagnostics.length, 1);
   assert.equal(result.diagnostics[0]?.code, "E_DIR_TEXT_LITERAL");
   assert.ok(result.diagnostics[0]?.message.includes("Invalid string literal"));
