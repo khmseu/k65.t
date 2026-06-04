@@ -76,6 +76,7 @@ function preprocessLines(
   lines: readonly string[],
   context: IncludeContext,
   macros: Map<string, MacroDefinition>,
+  constants: Map<string, number> = new Map(),
 ): string[] {
   const output: string[] = [];
 
@@ -83,6 +84,16 @@ function preprocessLines(
     const line = lines[i]!;
     const parsed = parseSource(line)[0]!;
     const mnemonic = parsed.mnemonic?.toUpperCase();
+
+    // Extract constants from simple assignment statements like "ROMSW = 1"
+    if (parsed.kind === "code" && !mnemonic) {
+      const assignmentMatch = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d+)\s*$/);
+      if (assignmentMatch) {
+        const constName = assignmentMatch[1]!.toUpperCase();
+        const constValue = parseInt(assignmentMatch[2]!, 10);
+        constants.set(constName, constValue);
+      }
+    }
 
     if (parsed.kind === "code" && mnemonic === ".INCLUDE") {
       const includeOperand = parsed.operands[0];
@@ -148,6 +159,7 @@ function preprocessLines(
           includeDepth: context.includeDepth + 1,
         },
         macros,
+        constants,
       );
       output.push(...includedLines);
       continue;
@@ -208,7 +220,7 @@ function preprocessLines(
         );
       }
 
-      const repeatEval = evaluateExpressionDetailed(countOperand, new Map(), 0);
+      const repeatEval = evaluateExpressionDetailed(countOperand, constants, 0);
       if (repeatEval.value === null) {
         throw new PreprocessError(
           repeatEval.errorCode ?? "E_EXPR_INVALID",
@@ -262,7 +274,7 @@ function preprocessLines(
       }
 
       for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex += 1) {
-        output.push(...preprocessLines(block, context, macros));
+        output.push(...preprocessLines(block, context, macros, constants));
       }
       continue;
     }
@@ -371,9 +383,10 @@ function preprocessLines(
         branches,
         parsed.lineNumber,
         parsed.raw,
+        constants,
       );
       if (selectedBranch !== undefined) {
-        output.push(...preprocessLines(selectedBranch.lines, context, macros));
+        output.push(...preprocessLines(selectedBranch.lines, context, macros, constants));
       }
       continue;
     }
@@ -504,6 +517,7 @@ function selectConditionalBranch(
   branches: ReadonlyArray<{ condition: string | null; lines: string[] }>,
   lineNumber: number,
   source: string,
+  constants: ReadonlyMap<string, number> = new Map(),
 ): { condition: string | null; lines: string[] } | undefined {
   for (const branch of branches) {
     if (branch.condition === null) {
@@ -512,7 +526,7 @@ function selectConditionalBranch(
 
     const evaluation = evaluateExpressionDetailed(
       branch.condition,
-      new Map(),
+      constants,
       0,
     );
     if (evaluation.value === null) {
