@@ -5,13 +5,31 @@
       "label": "VersionLens: NPM Install",
       "command": "npm",
       "type": "shell",
-      "args": ["install"],
+      "args": [
+        "install"
+      ],
       "options": {
         "cwd": "${fileDirname}"
       },
       "presentation": {
         "echo": true,
         "reveal": "always",
+        "focus": true,
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "type": "npm",
+      "script": "build",
+      "group": "build",
+      "problemMatcher": [],
+      "label": "npm: build",
+      "detail": "tsc -p tsconfig.json ",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
         "panel": "shared",
         "clear": true
       }

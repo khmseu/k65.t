@@ -145,7 +145,14 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
         const conditionOperand = line.operands[0];
         let isActive = false;
 
-        if (conditionOperand !== undefined) {
+        // If parent conditional is inactive, child must also be inactive
+        const parentFrame = stack.peek();
+        if (
+          parentFrame?.type === "if" &&
+          (parentFrame as any).activeBranchIndex === null
+        ) {
+          isActive = false;
+        } else if (conditionOperand !== undefined) {
           const evaluation = evaluateExpressionDetailed(
             conditionOperand,
             nextSymbols,
@@ -384,7 +391,15 @@ function collectDiagnostics(
     if (mnemonic === ".IF") {
       const conditionOperand = line.operands[0];
       let isActive = false;
-      if (conditionOperand !== undefined) {
+      
+      // If parent conditional is inactive, child must also be inactive
+      const parentFrame = stack.peek();
+      if (
+        parentFrame?.type === "if" &&
+        (parentFrame as any).activeBranchIndex === null
+      ) {
+        isActive = false;
+      } else if (conditionOperand !== undefined) {
         const evaluation = evaluateExpressionDetailed(
           conditionOperand,
           symbols,
@@ -392,6 +407,7 @@ function collectDiagnostics(
         );
         isActive = (evaluation.value ?? 0) !== 0;
       }
+      
       const ifFrame: any = {
         type: "if",
         depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
@@ -936,9 +952,17 @@ function buildListingOnly(
 
     // Handle .IF directive
     if (mnemonic === ".IF") {
-      const isActive =
-        (evaluateExpressionDetailed(line.operands[0] ?? "0", symbols, location)
-          .value ?? 0) !== 0;
+      // If parent conditional is inactive, child must also be inactive
+      const parentFrame = stack.peek();
+      let isActive =
+        parentFrame?.type === "if" &&
+        (parentFrame as any).activeBranchIndex === null
+          ? false
+          : (evaluateExpressionDetailed(
+              line.operands[0] ?? "0",
+              symbols,
+              location,
+            ).value ?? 0) !== 0;
       const ifFrame: any = {
         type: "if",
         depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
@@ -1188,7 +1212,14 @@ function emitBinary(
       const conditionOperand = line.operands[0];
       let isActive = false;
 
-      if (conditionOperand !== undefined) {
+      // If parent conditional is inactive, child must also be inactive
+      const parentFrame = stack.peek();
+      if (
+        parentFrame?.type === "if" &&
+        (parentFrame as any).activeBranchIndex === null
+      ) {
+        isActive = false;
+      } else if (conditionOperand !== undefined) {
         const evaluation = evaluateExpressionDetailed(
           conditionOperand,
           symbols,
