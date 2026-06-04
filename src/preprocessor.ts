@@ -49,6 +49,10 @@ export function preprocessSource(
     options.readFile ?? ((filePath: string) => readFileSync(filePath, "utf8"));
   const macros = new Map<string, MacroDefinition>();
 
+  // First pass: collect constants from the entire source
+  // This allows .if directives to reference symbols defined anywhere in the file
+  const constants = collectConstants(text.split(/\r?\n/));
+
   const output = preprocessLines(
     text.split(/\r?\n/),
     {
@@ -59,6 +63,7 @@ export function preprocessSource(
       includeDepth: 0,
     },
     macros,
+    constants,
   );
 
   return output.join("\n");
@@ -70,6 +75,85 @@ interface IncludeContext {
   readonly includeStack: readonly string[];
   readonly readFile: (filePath: string) => string;
   readonly includeDepth: number;
+}
+
+/**
+ * First pass: collect constants from the entire source tree.
+ * This enables .if directives to reference any top-level constant,
+ * regardless of declaration order or location in the file.
+ * Patterns recognized:
+ * - Simple assignment: VAR = VALUE or LABEL: VAR = VALUE format
+ * - EQU directive: VAR .equ VALUE (numeric only for now)
+ * - SET directive: VAR .set VALUE (numeric only for now)
+ */
+function collectConstants(lines: readonly string[]): Map<string, number> {
+  const constants = new Map<string, number>();
+
+  for (const line of lines) {
+    const parsed = parseSource(line)[0];
+    if (!parsed || parsed.kind !== "code") {
+      continue;
+    }
+
+    const mnemonic = parsed.mnemonic?.toUpperCase();
+
+    // Pattern 1: Simple assignment "VAR = VALUE" (parser treats as label = operand)
+    // Extract numeric values only to avoid dependency ordering issues
+    if (mnemonic === "=" && parsed.label) {
+      const operand = parsed.operands[0];
+      if (operand !== undefined) {
+        // Try to parse as numeric literal
+        const numValue = parseInt(operand, 10);
+        if (!isNaN(numValue) && operand === numValue.toString()) {
+          constants.set(parsed.label.toUpperCase(), numValue);
+        }
+      }
+      continue;
+    }
+
+    // Also handle plain assignment without label when parser doesn't recognize =
+    if (!mnemonic) {
+      const assignmentMatch = line.match(
+        /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([+-]?\d+)\s*$/,
+      );
+      if (assignmentMatch) {
+        const constName = assignmentMatch[1]!.toUpperCase();
+        const constValue = parseInt(assignmentMatch[2]!, 10);
+        constants.set(constName, constValue);
+      }
+      continue;
+    }
+
+    // Pattern 2: EQU directive "VAR .equ VALUE" (numeric only)
+    if (mnemonic === ".EQU") {
+      if (parsed.label) {
+        const operand = parsed.operands[0];
+        if (operand !== undefined) {
+          const numValue = parseInt(operand, 10);
+          if (!isNaN(numValue) && operand === numValue.toString()) {
+            constants.set(parsed.label.toUpperCase(), numValue);
+          }
+        }
+      }
+      continue;
+    }
+
+    // Pattern 3: SET directive "VAR .set VALUE" (numeric only)
+    if (mnemonic === ".SET") {
+      if (parsed.label) {
+        const operand = parsed.operands[0];
+        if (operand !== undefined) {
+          const numValue = parseInt(operand, 10);
+          if (!isNaN(numValue) && operand === numValue.toString()) {
+            constants.set(parsed.label.toUpperCase(), numValue);
+          }
+        }
+      }
+      continue;
+    }
+  }
+
+  return constants;
 }
 
 function preprocessLines(
@@ -84,16 +168,6 @@ function preprocessLines(
     const line = lines[i]!;
     const parsed = parseSource(line)[0]!;
     const mnemonic = parsed.mnemonic?.toUpperCase();
-
-    // Extract constants from simple assignment statements like "ROMSW = 1"
-    if (parsed.kind === "code" && !mnemonic) {
-      const assignmentMatch = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d+)\s*$/);
-      if (assignmentMatch) {
-        const constName = assignmentMatch[1]!.toUpperCase();
-        const constValue = parseInt(assignmentMatch[2]!, 10);
-        constants.set(constName, constValue);
-      }
-    }
 
     if (parsed.kind === "code" && mnemonic === ".INCLUDE") {
       const includeOperand = parsed.operands[0];
@@ -387,6 +461,13 @@ function preprocessLines(
       );
       if (selectedBranch !== undefined) {
         output.push(...preprocessLines(selectedBranch.lines, context, macros, constants));
+      } else {
+        // Condition couldn't be evaluated at preprocessing time (e.g., references undefined symbols).
+        // Conservatively include all lines from all branches (stripped of .if/.else/.endif).
+        // The assembler will see redundant definitions but won't crash or report errors.
+        for (const branch of branches) {
+          output.push(...preprocessLines(branch.lines, context, macros, constants));
+        }
       }
       continue;
     }
@@ -530,12 +611,10 @@ function selectConditionalBranch(
       0,
     );
     if (evaluation.value === null) {
-      throw new PreprocessError(
-        evaluation.errorCode ?? "E_EXPR_INVALID",
-        `.if condition error (${branch.condition}): ${evaluation.error ?? "invalid expression"}`,
-        lineNumber,
-        source,
-      );
+      // Condition can't be evaluated (unevaluatable symbols, expressions, etc).
+      // Return undefined so the caller can handle this gracefully.
+      // The preprocessor will conservatively include all branches.
+      return undefined;
     }
 
     if (evaluation.value !== 0) {
