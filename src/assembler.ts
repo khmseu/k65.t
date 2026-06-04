@@ -382,6 +382,7 @@ function collectDiagnostics(
 ): AssemblyDiagnostic[] {
   const diagnostics: AssemblyDiagnostic[] = [];
   let location = passState.startAddress;
+  const stack = new DirectiveStack();
 
   for (const [index, line] of lines.entries()) {
     if (line.kind !== "code") {
@@ -393,6 +394,99 @@ function collectDiagnostics(
     const scope = passState.lineScopes[index];
     if (mnemonic === undefined) {
       continue;
+    }
+
+    // Handle .IF directive
+    if (mnemonic === ".IF") {
+      const conditionOperand = line.operands[0];
+      let isActive = false;
+      if (conditionOperand !== undefined) {
+        const evaluation = evaluateExpressionDetailed(
+          conditionOperand,
+          symbols,
+          location,
+        );
+        isActive = (evaluation.value ?? 0) !== 0;
+      }
+      const ifFrame: any = {
+        type: "if",
+        depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
+        startLineNumber: line.lineNumber ?? 0,
+        branches: [
+          {
+            condition: conditionOperand ?? "",
+            lines: [],
+          },
+        ],
+        activeBranchIndex: isActive ? 0 : null,
+        currentBranchIndex: 0,
+      };
+      stack.push(ifFrame);
+      continue;
+    }
+
+    // Handle .ELSEIF
+    if (mnemonic === ".ELSEIF") {
+      if (!stack.isEmpty() && stack.peek()!.type === "if") {
+        const frame = stack.peek()!;
+        const ifFrame = frame as any;
+        const conditionOperand = line.operands[0];
+        let isActive = false;
+        if (
+          conditionOperand !== undefined &&
+          ifFrame.activeBranchIndex === null
+        ) {
+          const evaluation = evaluateExpressionDetailed(
+            conditionOperand,
+            symbols,
+            location,
+          );
+          isActive = (evaluation.value ?? 0) !== 0;
+        }
+        ifFrame.currentBranchIndex = ifFrame.branches.length;
+        if (ifFrame.activeBranchIndex === null && isActive) {
+          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
+        }
+        ifFrame.branches.push({
+          condition: conditionOperand ?? "",
+          lines: [],
+        });
+      }
+      continue;
+    }
+
+    // Handle .ELSE
+    if (mnemonic === ".ELSE") {
+      if (!stack.isEmpty() && stack.peek()!.type === "if") {
+        const frame = stack.peek()!;
+        const ifFrame = frame as any;
+        ifFrame.currentBranchIndex = ifFrame.branches.length;
+        if (ifFrame.activeBranchIndex === null) {
+          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
+        }
+        ifFrame.branches.push({
+          condition: null,
+          lines: [],
+        });
+      }
+      continue;
+    }
+
+    // Handle .ENDIF
+    if (mnemonic === ".ENDIF") {
+      if (!stack.isEmpty() && stack.peek()!.type === "if") {
+        stack.pop();
+      }
+      continue;
+    }
+
+    // Skip lines in inactive conditional branches
+    if (stack.isInConditional()) {
+      const frame = stack.peek()!;
+      const ifFrame = frame as any;
+      if (ifFrame.currentBranchIndex !== ifFrame.activeBranchIndex) {
+        continue;
+      }
     }
 
     if (mnemonic === ".ORG") {
@@ -421,6 +515,9 @@ function collectDiagnostics(
               evaluation.errorColumn ?? undefined,
             ),
           );
+        } else {
+          // Update location to the new origin when .ORG is valid
+          location = evaluation.value & 0xffff;
         }
       }
       continue;
@@ -856,11 +953,8 @@ function buildListingOnly(
     // Handle .IF directive
     if (mnemonic === ".IF") {
       const isActive =
-        (evaluateExpressionDetailed(
-          line.operands[0] ?? "0",
-          symbols,
-          location,
-        ).value ?? 0) !== 0;
+        (evaluateExpressionDetailed(line.operands[0] ?? "0", symbols, location)
+          .value ?? 0) !== 0;
       const ifFrame: any = {
         type: "if",
         depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
