@@ -1,4 +1,6 @@
 import type { SourceLine } from "./types.js";
+import { isDirective } from "./directives.js";
+import { opcodes } from "./opcodes.js";
 
 const commentOnlyPattern = /^\s*(?:[;*].*)?$/;
 
@@ -39,31 +41,36 @@ function parseLine(raw: string, lineNumber: number): SourceLine {
   } else if (
     tokens.length === 1 &&
     isLikelyLabel(firstToken) &&
-    !isOpcodeLike(firstToken)
+    !isKnownMnemonic(firstToken)
   ) {
+    // Single token that looks like a label and is not a known mnemonic
     label = firstToken;
     mnemonic = undefined;
     operands = [];
   } else if (
     tokens.length >= 2 &&
     isLikelyLabel(firstToken) &&
-    !isOpcodeLike(firstToken)
+    secondToken !== undefined &&
+    isDirectiveOrAssignment(secondToken)
   ) {
+    // First token is a label, second token is a directive or assignment operator.
+    // Treat as label + directive even if first token looks opcode-like.
+    // E.g., "ADC = 100", "LDA .equ 10", "VAL .set 5"
     label = firstToken;
     mnemonic = secondToken;
     operands = collectOperands(tokens.slice(2));
   } else if (
     tokens.length >= 2 &&
     isLikelyLabel(firstToken) &&
-    secondToken !== undefined &&
-    isDirectiveOrAssignment(secondToken)
+    !isKnownMnemonic(firstToken)
   ) {
-    // Even if first token looks opcode-like (3 letters), treat it as a label
-    // if the second token is a directive (.equ, .set) or assignment operator (=)
+    // Two+ tokens, first looks like label, second is not a known mnemonic/directive.
+    // E.g., "LOOP LDA #1"
     label = firstToken;
     mnemonic = secondToken;
     operands = collectOperands(tokens.slice(2));
   } else {
+    // Default: first token is a mnemonic (opcode or directive)
     mnemonic = firstToken;
     operands = collectOperands(tokens.slice(1));
   }
@@ -196,11 +203,21 @@ function isLikelyLabel(token: string): boolean {
   return /^(?:@)?[A-Za-z_][A-Za-z0-9_]*$/.test(token);
 }
 
-function isOpcodeLike(token: string): boolean {
-  return /^[A-Za-z]{3}$/.test(token);
+/**
+ * Check if a token is a known mnemonic (opcode or directive).
+ * Uses lookup-based validation instead of heuristics like "3 letters = opcode".
+ */
+function isKnownMnemonic(token: string): boolean {
+  const upper = token.toUpperCase();
+  return opcodes[upper] !== undefined || isDirective(upper);
 }
 
+/**
+ * Check if a token is a directive or assignment operator.
+ * Used to determine if a 3-letter identifier should be treated as a label.
+ * E.g., "ADC = 100" → label="ADC" (not mnemonic="ADC")
+ */
 function isDirectiveOrAssignment(token: string): boolean {
   const upper = token.toUpperCase();
-  return upper === "=" || upper === ".EQU" || upper === ".SET";
+  return upper === "=" || upper === ".EQU" || upper === ".SET" || isDirective(upper);
 }
