@@ -354,24 +354,13 @@ function preprocessLines(
     }
 
     if (parsed.kind === "code" && mnemonic === ".IF") {
-      const conditionOperand = parsed.operands[0];
-      if (conditionOperand === undefined) {
-        throw new PreprocessError(
-          "E_IF_CONDITION",
-          ".if requires a condition expression",
-          parsed.lineNumber,
-          parsed.raw,
-        );
-      }
+      // Pass .if blocks through to main assembly loop for handling
+      // The main loop will use DirectiveStack to manage branch selection
+      output.push(line);
 
-      const branches: Array<{ condition: string | null; lines: string[] }> = [];
-      let activeBranch: { condition: string | null; lines: string[] } = {
-        condition: conditionOperand,
-        lines: [],
-      };
-      let foundEnd = false;
+      // Consume the block structure (but don't evaluate or select branches)
       let nesting = 0;
-      let sawElse = false;
+      let foundEnd = false;
 
       for (i += 1; i < lines.length; i += 1) {
         const bodyLine = lines[i]!;
@@ -380,68 +369,33 @@ function preprocessLines(
 
         if (bodyParsed.kind === "code" && bodyMnemonic === ".IF") {
           nesting += 1;
-          activeBranch.lines.push(bodyLine);
+          output.push(bodyLine);
           continue;
         }
 
         if (bodyParsed.kind === "code" && bodyMnemonic === ".ENDIF") {
           if (nesting === 0) {
-            branches.push(activeBranch);
             foundEnd = true;
+            output.push(bodyLine); // Include the .endif
             break;
           }
           nesting -= 1;
-          activeBranch.lines.push(bodyLine);
+          output.push(bodyLine);
           continue;
         }
 
+        // Pass .else, .elseif through unchanged (main loop will interpret them)
         if (
           nesting === 0 &&
           bodyParsed.kind === "code" &&
-          bodyMnemonic === ".ELSEIF"
+          (bodyMnemonic === ".ELSEIF" ||
+            bodyMnemonic === ".ELSE")
         ) {
-          if (sawElse) {
-            throw new PreprocessError(
-              "E_IF_ORDER",
-              ".elseif cannot appear after .else",
-              bodyParsed.lineNumber,
-              bodyParsed.raw,
-            );
-          }
-          const elseifCondition = bodyParsed.operands[0];
-          if (elseifCondition === undefined) {
-            throw new PreprocessError(
-              "E_IF_CONDITION",
-              ".elseif requires a condition expression",
-              bodyParsed.lineNumber,
-              bodyParsed.raw,
-            );
-          }
-          branches.push(activeBranch);
-          activeBranch = { condition: elseifCondition, lines: [] };
+          output.push(bodyLine);
           continue;
         }
 
-        if (
-          nesting === 0 &&
-          bodyParsed.kind === "code" &&
-          bodyMnemonic === ".ELSE"
-        ) {
-          if (sawElse) {
-            throw new PreprocessError(
-              "E_IF_ORDER",
-              "Only one .else is allowed per .if block",
-              bodyParsed.lineNumber,
-              bodyParsed.raw,
-            );
-          }
-          sawElse = true;
-          branches.push(activeBranch);
-          activeBranch = { condition: null, lines: [] };
-          continue;
-        }
-
-        activeBranch.lines.push(bodyLine);
+        output.push(bodyLine);
       }
 
       if (!foundEnd) {
@@ -452,26 +406,6 @@ function preprocessLines(
           parsed.raw,
         );
       }
-
-      const selectionResult = selectConditionalBranch(
-        branches,
-        parsed.lineNumber,
-        parsed.raw,
-        constants,
-      );
-      
-      if (selectionResult === "unevaluatable") {
-        // Condition couldn't be evaluated at preprocessing time (e.g., references undefined symbols).
-        // Conservatively include all lines from all branches (stripped of .if/.else/.endif).
-        // The assembler will see redundant definitions but won't crash or report errors.
-        for (const branch of branches) {
-          output.push(...preprocessLines(branch.lines, context, macros, constants));
-        }
-      } else if (selectionResult !== null) {
-        // selectionResult is a branch object with lines to include
-        output.push(...preprocessLines(selectionResult.lines, context, macros, constants));
-      }
-      // else: selectionResult === null means no branch matched and no .else; skip all
       continue;
     }
 

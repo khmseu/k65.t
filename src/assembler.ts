@@ -9,7 +9,10 @@ import {
   opcodes,
   type AddressingMode,
 } from "./opcodes.js";
+import { isDirective } from "./directives.js";
 import { PreprocessError, preprocessSource } from "./preprocessor.js";
+import { DirectiveStack } from "./directive-stack.js";
+import { directiveAwareIteration } from "./directive-iterator.js";
 import type {
   AssemblyDiagnostic,
   AssemblyResult,
@@ -147,7 +150,132 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
     let maxAddress = Number.NEGATIVE_INFINITY;
     let currentScope: string | undefined;
 
+    // Directive stack for managing nested .if/.repeat scopes
+    const stack = new DirectiveStack();
+
     for (const line of lines) {
+      const mnemonic = normalizeMnemonic(line.mnemonic);
+      
+      // Handle .IF directive: evaluate condition and push frame
+      if (line.kind === "code" && mnemonic === ".IF") {
+        const conditionOperand = line.operands[0];
+        let isActive = false;
+        
+        if (conditionOperand !== undefined) {
+          const evaluation = evaluateExpressionDetailed(
+            conditionOperand,
+            nextSymbols,
+            location,
+          );
+          isActive = (evaluation.value ?? 0) !== 0;
+        }
+        
+        const ifFrame: any = {
+          type: "if",
+          depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
+          startLineNumber: line.lineNumber ?? 0,
+          branches: [{
+            condition: conditionOperand ?? "",
+            lines: [],
+          }],
+          activeBranchIndex: isActive ? 0 : null,
+          currentBranchIndex: 0,  // Track which branch we're currently in
+        };
+        stack.push(ifFrame);
+        
+        lineSymbols.push(new Map(nextSymbols));
+        lineScopes.push(currentScope);
+        lineSizes.push(0);
+        continue;
+      }
+
+      // Handle .ELSEIF: evaluate new condition, update active branch
+      if (line.kind === "code" && mnemonic === ".ELSEIF") {
+        if (!stack.isEmpty() && stack.peek()!.type === "if") {
+          const frame = stack.peek()!;
+          const ifFrame = frame as any;
+          const conditionOperand = line.operands[0];
+          
+          let isActive = false;
+          if (conditionOperand !== undefined && ifFrame.activeBranchIndex === null) {
+            const evaluation = evaluateExpressionDetailed(
+              conditionOperand,
+              nextSymbols,
+              location,
+            );
+            isActive = (evaluation.value ?? 0) !== 0;
+          }
+          
+          // Move to next branch
+          ifFrame.currentBranchIndex = ifFrame.branches.length;
+          
+          if (ifFrame.activeBranchIndex === null && isActive) {
+            ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
+          }
+          
+          ifFrame.branches.push({
+            condition: conditionOperand ?? "",
+            lines: [],
+          });
+        }
+        
+        lineSymbols.push(new Map(nextSymbols));
+        lineScopes.push(currentScope);
+        lineSizes.push(0);
+        continue;
+      }
+
+      // Handle .ELSE: activate if no other branch was active
+      if (line.kind === "code" && mnemonic === ".ELSE") {
+        if (!stack.isEmpty() && stack.peek()!.type === "if") {
+          const frame = stack.peek()!;
+          const ifFrame = frame as any;
+          
+          // Move to next branch (.else is always the final branch)
+          ifFrame.currentBranchIndex = ifFrame.branches.length;
+          
+          if (ifFrame.activeBranchIndex === null) {
+            ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
+          }
+          
+          ifFrame.branches.push({
+            condition: null,
+            lines: [],
+          });
+        }
+        
+        lineSymbols.push(new Map(nextSymbols));
+        lineScopes.push(currentScope);
+        lineSizes.push(0);
+        continue;
+      }
+
+      // Handle .ENDIF: pop conditional frame
+      if (line.kind === "code" && mnemonic === ".ENDIF") {
+        if (!stack.isEmpty() && stack.peek()!.type === "if") {
+          stack.pop();
+        }
+        
+        lineSymbols.push(new Map(nextSymbols));
+        lineScopes.push(currentScope);
+        lineSizes.push(0);
+        continue;
+      }
+
+      // Check if we're in an inactive branch and should skip this line
+      if (stack.isInConditional()) {
+        const frame = stack.peek()!;
+        const ifFrame = frame as any;
+        // Skip if we're in a conditional but this branch isn't the active one
+        if (ifFrame.currentBranchIndex !== ifFrame.activeBranchIndex) {
+          lineSymbols.push(new Map(nextSymbols));
+          lineScopes.push(currentScope);
+          lineSizes.push(0);
+          continue;
+        }
+      }
+
+      // Regular line processing
       if (line.kind !== "code") {
         lineSymbols.push(new Map(nextSymbols));
         lineScopes.push(currentScope);
@@ -155,7 +283,6 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
         continue;
       }
 
-      const mnemonic = normalizeMnemonic(line.mnemonic);
       if (line.label !== undefined && !isCheapLabel(line.label)) {
         currentScope = normalizeGlobalLabel(line.label);
       }
@@ -549,6 +676,12 @@ function collectDiagnostics(
       continue;
     }
 
+    // Control flow directives (.if, .elseif, .else, .endif, .repeat, .endrepeat)
+    // are handled in runSizingPasses and emitBinary, so skip them here
+    if (isDirective(mnemonic)) {
+      continue;
+    }
+
     const opcodeTable = opcodes[mnemonic];
     if (opcodeTable === undefined) {
       diagnostics.push(
@@ -790,6 +923,9 @@ function emitBinary(
   let pendingSubtitle: string | undefined;
   let pendingPageBreak = false;
 
+  // Directive stack for managing nested .if/.repeat scopes
+  const stack = new DirectiveStack();
+
   for (const [index, line] of lines.entries()) {
     if (line.kind !== "code") {
       listing.push({ address: null, bytes: [], source: line.raw });
@@ -813,6 +949,135 @@ function emitBinary(
       pendingPageBreak = false;
       listing.push(listingLine);
       continue;
+    }
+
+    // Handle .IF directive: evaluate condition and push frame
+    if (mnemonic === ".IF") {
+      const conditionOperand = line.operands[0];
+      let isActive = false;
+      
+      if (conditionOperand !== undefined) {
+        const evaluation = evaluateExpressionDetailed(
+          conditionOperand,
+          symbols,
+          location,
+        );
+        isActive = (evaluation.value ?? 0) !== 0;
+      }
+      
+      const ifFrame: any = {
+        type: "if",
+        depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
+        startLineNumber: line.lineNumber ?? 0,
+        branches: [{
+          condition: conditionOperand ?? "",
+          lines: [],
+        }],
+        activeBranchIndex: isActive ? 0 : null,
+        currentBranchIndex: 0,  // Track which branch we're currently in
+      };
+      stack.push(ifFrame);
+      
+      listing.push({
+        address: null,
+        bytes: [],
+        source: line.raw,
+      });
+      continue;
+    }
+
+    // Handle .ELSEIF: evaluate new condition, update active branch
+    if (mnemonic === ".ELSEIF") {
+      if (!stack.isEmpty() && stack.peek()!.type === "if") {
+        const frame = stack.peek()!;
+        const ifFrame = frame as any;
+        const conditionOperand = line.operands[0];
+        
+        let isActive = false;
+        if (conditionOperand !== undefined && ifFrame.activeBranchIndex === null) {
+          const evaluation = evaluateExpressionDetailed(
+            conditionOperand,
+            symbols,
+            location,
+          );
+          isActive = (evaluation.value ?? 0) !== 0;
+        }
+        
+        // Move to next branch
+        ifFrame.currentBranchIndex = ifFrame.branches.length;
+        
+        if (ifFrame.activeBranchIndex === null && isActive) {
+          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
+        }
+        
+        ifFrame.branches.push({
+          condition: conditionOperand ?? "",
+          lines: [],
+        });
+      }
+      
+      listing.push({
+        address: null,
+        bytes: [],
+        source: line.raw,
+      });
+      continue;
+    }
+
+    // Handle .ELSE: activate if no other branch was active
+    if (mnemonic === ".ELSE") {
+      if (!stack.isEmpty() && stack.peek()!.type === "if") {
+        const frame = stack.peek()!;
+        const ifFrame = frame as any;
+        
+        // Move to next branch (.else is always the final branch)
+        ifFrame.currentBranchIndex = ifFrame.branches.length;
+        
+        if (ifFrame.activeBranchIndex === null) {
+          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
+        }
+        
+        ifFrame.branches.push({
+          condition: null,
+          lines: [],
+        });
+      }
+      
+      listing.push({
+        address: null,
+        bytes: [],
+        source: line.raw,
+      });
+      continue;
+    }
+
+    // Handle .ENDIF: pop conditional frame
+    if (mnemonic === ".ENDIF") {
+      if (!stack.isEmpty() && stack.peek()!.type === "if") {
+        stack.pop();
+      }
+      
+      listing.push({
+        address: null,
+        bytes: [],
+        source: line.raw,
+      });
+      continue;
+    }
+
+    // Check if we're in an inactive branch and should skip this line
+    if (stack.isInConditional()) {
+      const frame = stack.peek()!;
+      const ifFrame = frame as any;
+      // Skip if we're in a conditional but this branch isn't the active one
+      if (ifFrame.currentBranchIndex !== ifFrame.activeBranchIndex) {
+        listing.push({
+          address: null,
+          bytes: [],
+          source: line.raw,
+        });
+        continue;
+      }
     }
 
     if (mnemonic === ".ORG") {
