@@ -90,7 +90,7 @@ export function assemble(
       ? emitBinary(parsed, sized)
       : {
           binary: new Uint8Array(),
-          listing: buildListingOnly(parsed),
+          listing: buildListingOnly(parsed, sized),
           bytesPerLine: 16,
           pageSize: 0,
         };
@@ -817,12 +817,161 @@ function resolveOperandDiagnostic(
   };
 }
 
-function buildListingOnly(lines: readonly SourceLine[]): ListingLine[] {
-  return lines.map((line) => ({
-    address: line.kind === "code" ? 0 : null,
-    bytes: [],
-    source: line.raw,
-  }));
+function buildListingOnly(
+  lines: readonly SourceLine[],
+  passState: PassState,
+): ListingLine[] {
+  const listing: ListingLine[] = [];
+  let location = passState.startAddress;
+  const stack = new DirectiveStack();
+
+  for (const [index, line] of lines.entries()) {
+    if (line.kind !== "code") {
+      listing.push({ address: null, bytes: [], source: line.raw });
+      continue;
+    }
+
+    const mnemonic = normalizeMnemonic(line.mnemonic);
+    const symbols = passState.lineSymbols[index] ?? passState.symbols;
+    const scope = passState.lineScopes[index];
+
+    // Handle .ORG directive
+    if (mnemonic === ".ORG") {
+      const target =
+        (evaluateScopedExpression(
+          line.operands[0] ?? "0",
+          symbols,
+          location,
+          scope,
+        ) ?? location) & 0xffff;
+      location = target;
+      listing.push({
+        address: null,
+        bytes: [],
+        source: line.raw,
+      });
+      continue;
+    }
+
+    // Handle .IF directive
+    if (mnemonic === ".IF") {
+      const isActive =
+        (evaluateExpressionDetailed(
+          line.operands[0] ?? "0",
+          symbols,
+          location,
+        ).value ?? 0) !== 0;
+      const ifFrame: any = {
+        type: "if",
+        depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
+        startLineNumber: line.lineNumber ?? 0,
+        branches: [
+          {
+            condition: line.operands[0] ?? "",
+            lines: [],
+          },
+        ],
+        activeBranchIndex: isActive ? 0 : null,
+        currentBranchIndex: 0,
+      };
+      stack.push(ifFrame);
+      listing.push({
+        address: null,
+        bytes: [],
+        source: line.raw,
+      });
+      continue;
+    }
+
+    // Handle .ELSEIF
+    if (mnemonic === ".ELSEIF") {
+      if (!stack.isEmpty() && stack.peek()!.type === "if") {
+        const frame = stack.peek()!;
+        const ifFrame = frame as any;
+        const isActive =
+          ifFrame.activeBranchIndex === null &&
+          (evaluateExpressionDetailed(
+            line.operands[0] ?? "0",
+            symbols,
+            location,
+          ).value ?? 0) !== 0;
+        ifFrame.currentBranchIndex = ifFrame.branches.length;
+        if (isActive) {
+          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
+        }
+        ifFrame.branches.push({
+          condition: line.operands[0] ?? "",
+          lines: [],
+        });
+      }
+      listing.push({
+        address: null,
+        bytes: [],
+        source: line.raw,
+      });
+      continue;
+    }
+
+    // Handle .ELSE
+    if (mnemonic === ".ELSE") {
+      if (!stack.isEmpty() && stack.peek()!.type === "if") {
+        const frame = stack.peek()!;
+        const ifFrame = frame as any;
+        ifFrame.currentBranchIndex = ifFrame.branches.length;
+        if (ifFrame.activeBranchIndex === null) {
+          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
+        }
+        ifFrame.branches.push({
+          condition: null,
+          lines: [],
+        });
+      }
+      listing.push({
+        address: null,
+        bytes: [],
+        source: line.raw,
+      });
+      continue;
+    }
+
+    // Handle .ENDIF
+    if (mnemonic === ".ENDIF") {
+      if (!stack.isEmpty() && stack.peek()!.type === "if") {
+        stack.pop();
+      }
+      listing.push({
+        address: null,
+        bytes: [],
+        source: line.raw,
+      });
+      continue;
+    }
+
+    // Skip lines in inactive conditional branches
+    if (stack.isInConditional()) {
+      const frame = stack.peek()!;
+      const ifFrame = frame as any;
+      if (ifFrame.currentBranchIndex !== ifFrame.activeBranchIndex) {
+        listing.push({
+          address: null,
+          bytes: [],
+          source: line.raw,
+        });
+        continue;
+      }
+    }
+
+    // Use precomputed line size from sizing pass
+    const lineSize = passState.lineSizes[index] ?? 0;
+    listing.push({
+      address: location & 0xffff,
+      bytes: [],
+      source: line.raw,
+    });
+    location += lineSize;
+  }
+
+  return listing;
 }
 
 function sizeLine(

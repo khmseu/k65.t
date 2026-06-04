@@ -1,7 +1,7 @@
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { parseLine, parseSource } from "./parser.js";
 
 import { evaluateExpressionDetailed } from "./expressions.js";
-import { parseLine, parseSource } from "./parser.js";
 import { readFileSync } from "node:fs";
 
 const MAX_EXPANSION_DEPTH = 25;
