@@ -1,6 +1,8 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { assemble } from "./assembler.js";
 import { parseCliArgs, resolveOutputPaths } from "./cli.js";
+import { readFile, writeFile } from "node:fs/promises";
+
+import { assemble } from "./assembler.js";
+import { error } from "node:console";
 import { formatListing } from "./listing.js";
 
 async function main(): Promise<void> {
@@ -21,9 +23,7 @@ async function main(): Promise<void> {
       );
       console.error(`  ${diagnostic.source}`);
     }
-    throw new Error(
-      `Assembly failed with ${result.diagnostics.length} diagnostic(s)`,
-    );
+    error(`Assembly failed with ${result.diagnostics.length} diagnostic(s)`);
   }
 
   const { binPath, lstPath, symPath } = resolveOutputPaths(cli);
