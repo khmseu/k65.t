@@ -1373,11 +1373,23 @@ function emitBinary(
     }
 
     if (isAssignmentDirective(mnemonic)) {
-      const resolved = passState.symbols.get(line.label?.toUpperCase() ?? "");
+      let resolved: number | null = null;
+      if (line.label !== undefined) {
+        const expr = line.operands[0];
+        resolved =
+          expr === undefined
+            ? null
+            : evaluateScopedExpression(
+                expr,
+                passState.symbols,
+                location,
+                line.label.toUpperCase(),
+              );
+      }
       const listingLine: ListingLine = {
         address: location & 0xffff,
         bytes: [],
-        target: resolved,
+        target: resolved || undefined,
         source: line.raw,
         ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
         ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),

@@ -29,10 +29,7 @@ export function formatListingLine(
     let bytesField = " ".repeat(maxBytesWidth); // Empty bytes field padded
     // For assignment directives, show the assigned value as target
     if (bytesPerLine > 3 && line.target !== undefined) {
-      const targetStr = line.target
-        .toString(16)
-        .toUpperCase()
-        .padStart(4, "0");
+      const targetStr = line.target.toString(16).toUpperCase().padStart(4, "0");
       bytesField = bytesField.substring(0, maxBytesWidth - 4) + targetStr;
     }
     const line1 = address + " " + bytesField + " " + sourceText;
