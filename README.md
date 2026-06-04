@@ -325,21 +325,21 @@ Expressions are used in directives and addressing modes to compute values. All e
 
 ### Numeric Literals
 
-| Format | Example | Result |
-|--------|---------|--------|
-| Decimal | `1000` | 1000 |
-| Hexadecimal ($) | `$3E8` | 1000 |
-| Hexadecimal (0x) | `0x3E8` | 1000 |
-| Octal (0o) | `0o1750` | 1000 |
-| Binary (%) | `%1111101000` | 1000 |
+| Format           | Example       | Result |
+| ---------------- | ------------- | ------ |
+| Decimal          | `1000`        | 1000   |
+| Hexadecimal ($)  | `$3E8`        | 1000   |
+| Hexadecimal (0x) | `0x3E8`       | 1000   |
+| Octal (0o)       | `0o1750`      | 1000   |
+| Binary (%)       | `%1111101000` | 1000   |
 
 ### Primitives
 
-| Primitive | Description | Example |
-|-----------|-------------|---------|
-| `*` | Current program counter location | `JMP *` (infinite loop) |
-| `symbol` | Reference to a label or constant | `LDA START` |
-| String literal | Single character in quotes | `'A'` = 65, `"\n"` = 10 |
+| Primitive      | Description                      | Example                 |
+| -------------- | -------------------------------- | ----------------------- |
+| `*`            | Current program counter location | `JMP *` (infinite loop) |
+| `symbol`       | Reference to a label or constant | `LDA START`             |
+| String literal | Single character in quotes       | `'A'` = 65, `"\n"` = 10 |
 
 String escape sequences: `\n` (newline = 0x0A), `\r` (carriage return = 0x0D), `\t` (tab = 0x09), `\\` (backslash), `\"` (quote), `\'` (apostrophe), `\xHH` (hex byte).
 
@@ -347,35 +347,35 @@ String escape sequences: `\n` (newline = 0x0A), `\r` (carriage return = 0x0D), `
 
 #### Unary Operators (right-associative)
 
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `+value` | Unary plus (no-op) | `+$100` = 256 |
-| `-value` | Negation (two's complement) | `-1` = 65535 |
-| `~value` | Bitwise NOT | `~0` = 65535 |
-| `!value` | Logical NOT (0→1, nonzero→0) | `!0` = 1, `!5` = 0 |
-| `<value` | Low byte (mask with 0xFF) | `<$1234` = 0x34 |
-| `>value` | High byte (shift right 8, mask) | `>$1234` = 0x12 |
+| Operator | Description                     | Example            |
+| -------- | ------------------------------- | ------------------ |
+| `+value` | Unary plus (no-op)              | `+$100` = 256      |
+| `-value` | Negation (two's complement)     | `-1` = 65535       |
+| `~value` | Bitwise NOT                     | `~0` = 65535       |
+| `!value` | Logical NOT (0→1, nonzero→0)    | `!0` = 1, `!5` = 0 |
+| `<value` | Low byte (mask with 0xFF)       | `<$1234` = 0x34    |
+| `>value` | High byte (shift right 8, mask) | `>$1234` = 0x12    |
 
 #### Binary Operators (left-associative, listed by precedence)
 
-| Operator | Precedence | Description | Example |
-|----------|------------|-------------|---------|
-| `*` | Highest | Multiplication | `2*3` = 6 |
-| `/` | | Integer division | `7/2` = 3 |
-| `%` | | Modulo (remainder) | `7%3` = 1 |
-| `+` | | Addition | `1+2` = 3 |
-| `-` | | Subtraction | `5-2` = 3 |
-| `&` | | Bitwise AND | `$0F & $F0` = 0 |
-| `^` | | Bitwise XOR | `$0F ^ $F0` = 255 |
-| `\|` | | Bitwise OR | `$0F \| $F0` = 255 |
-| `==` | | Equality (1 if true, 0 if false) | `1==1` = 1 |
-| `=` | | Equality (alternative syntax) | `1=1` = 1 |
-| `!=` | | Not equal | `1!=2` = 1 |
-| `<>` | | Not equal (alternative syntax) | `1<>2` = 1 |
-| `<` | Lowest | Less than | `1<2` = 1 |
-| `>` | | Greater than | `2>1` = 1 |
-| `<=` | | Less than or equal | `1<=2` = 1 |
-| `>=` | | Greater than or equal | `2>=1` = 1 |
+| Operator | Precedence | Description                      | Example            |
+| -------- | ---------- | -------------------------------- | ------------------ |
+| `*`      | Highest    | Multiplication                   | `2*3` = 6          |
+| `/`      |            | Integer division                 | `7/2` = 3          |
+| `%`      |            | Modulo (remainder)               | `7%3` = 1          |
+| `+`      |            | Addition                         | `1+2` = 3          |
+| `-`      |            | Subtraction                      | `5-2` = 3          |
+| `&`      |            | Bitwise AND                      | `$0F & $F0` = 0    |
+| `^`      |            | Bitwise XOR                      | `$0F ^ $F0` = 255  |
+| `\|`     |            | Bitwise OR                       | `$0F \| $F0` = 255 |
+| `==`     |            | Equality (1 if true, 0 if false) | `1==1` = 1         |
+| `=`      |            | Equality (alternative syntax)    | `1=1` = 1          |
+| `!=`     |            | Not equal                        | `1!=2` = 1         |
+| `<>`     |            | Not equal (alternative syntax)   | `1<>2` = 1         |
+| `<`      | Lowest     | Less than                        | `1<2` = 1          |
+| `>`      |            | Greater than                     | `2>1` = 1          |
+| `<=`     |            | Less than or equal               | `1<=2` = 1         |
+| `>=`     |            | Greater than or equal            | `2>=1` = 1         |
 
 ### Examples
 
@@ -422,4 +422,3 @@ ADDR = BASE + (OFFSET / 2)
 - Reassignable labels use `.set` or `=` and are resolved sequentially, so each reassignment only affects later lines.
 - Pure comment lines may start with `;` or `*`.
 - Blank lines are accepted.
-- See the **Expressions** section above for details on operators, primitives, and numeric literals.
