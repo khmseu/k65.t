@@ -5,9 +5,7 @@
       "label": "VersionLens: NPM Install",
       "command": "npm",
       "type": "shell",
-      "args": [
-        "install"
-      ],
+      "args": ["install"],
       "options": {
         "cwd": "${fileDirname}"
       },

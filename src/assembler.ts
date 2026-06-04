@@ -391,7 +391,7 @@ function collectDiagnostics(
     if (mnemonic === ".IF") {
       const conditionOperand = line.operands[0];
       let isActive = false;
-      
+
       // If parent conditional is inactive, child must also be inactive
       const parentFrame = stack.peek();
       if (
@@ -407,7 +407,7 @@ function collectDiagnostics(
         );
         isActive = (evaluation.value ?? 0) !== 0;
       }
-      
+
       const ifFrame: any = {
         type: "if",
         depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
