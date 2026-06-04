@@ -454,6 +454,149 @@ test("assemble reports unexpected .endif", () => {
   assert.equal(result.diagnostics[0]?.code, "E_IF_UNEXPECTED_END");
 });
 
+test("assemble supports nested conditional blocks (3 levels)", () => {
+  const source = [
+    ".org $8C00",
+    ".if 1",
+    "  .byte $11",
+    "  .if 1",
+    "    .byte $22",
+    "    .if 0",
+    "      .byte $33",
+    "    .else",
+    "      .byte $44",
+    "    .endif",
+    "  .else",
+    "    .byte $55",
+    "  .endif",
+    ".else",
+    "  .byte $66",
+    ".endif",
+    "tail .byte $77",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0x11, 0x22, 0x44, 0x77]);
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "TAIL")?.value,
+    0x8c03,  // 3 bytes emitted (0x11, 0x22, 0x44), tail at offset 3
+  );
+});
+
+test("assemble handles forward references in conditional expressions", () => {
+  const source = [
+    ".org $8D00",
+    ".if CONSTANT > 5",
+    "  .byte $11",
+    ".else",
+    "  .byte $22",
+    ".endif",
+    "CONSTANT = 10",
+    "tail .byte $33",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  // CONSTANT is defined after the .if, so the condition should be true in the final pass
+  assert.deepEqual(Array.from(result.binary), [0x11, 0x33]);
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "TAIL")?.value,
+    0x8d01,  // 1 byte before tail
+  );
+});
+
+test("assemble treats undefined symbols in conditions as false", () => {
+  const source = [
+    ".org $8E00",
+    ".if UNDEFINED_SYMBOL",
+    "  .byte $11",
+    ".else",
+    "  .byte $22",
+    ".endif",
+    "tail .byte $33",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  // Undefined symbols in conditions evaluate to false (null becomes 0)
+  // This is NOT an error - it's expected behavior
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0x22, 0x33]);
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "TAIL")?.value,
+    0x8e01,
+  );
+});
+
+test("assemble handles labels in conditional branches", () => {
+  const source = [
+    ".org $9000",
+    ".if 0",
+    "start1 .byte $11",
+    ".elseif 0",
+    "start2 .byte $22",
+    ".else",
+    "start3 .byte $33",
+    ".endif",
+    "tail .byte $44",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0x33, 0x44]);
+  // Only start3 should be defined (in the active branch)
+  assert.ok(result.symbols.some((s) => s.name === "START3"));
+  assert.equal(
+    result.symbols.find((entry) => entry.name === "START3")?.value,
+    0x9000,
+  );
+  // start1 and start2 are in inactive branches
+  assert.ok(!result.symbols.some((s) => s.name === "START1"));
+  assert.ok(!result.symbols.some((s) => s.name === "START2"));
+});
+
+test("assemble supports empty conditional branches", () => {
+  const source = [
+    ".org $9100",
+    ".if 0",
+    ".else",
+    ".endif",
+    "start .byte $55",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0x55]);
+});
+
+test("assemble handles multiple sequential conditionals", () => {
+  const source = [
+    ".org $9200",
+    ".if 1",
+    "  .byte $11",
+    ".endif",
+    ".if 1",
+    "  .byte $22",
+    ".endif",
+    ".if 0",
+    "  .byte $33",
+    ".else",
+    "  .byte $44",
+    ".endif",
+    "tail .byte $55",
+  ].join("\n");
+
+  const result = assemble(source);
+
+  assert.equal(result.diagnostics.length, 0);
+  assert.deepEqual(Array.from(result.binary), [0x11, 0x22, 0x44, 0x55]);
+});
+
 test("listing metadata directives produce visible effects in output", async () => {
   const root = await mkdtemp(join(tmpdir(), "k65t-listing-"));
   const sourcePath = join(root, "test.asm");
