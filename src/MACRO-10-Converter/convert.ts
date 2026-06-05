@@ -1,5 +1,7 @@
 import * as fs from "fs";
 
+import { fileURLToPath } from "url";
+
 /**
  * Converts MACRO-10 assembler format to k65.t format.
  * @param content The original MACRO-10 source code as a string.
@@ -208,8 +210,13 @@ export function convertMacro10ToK65(content: string): string {
   return outLines.join("\n");
 }
 
-// CLI Execution
-if (require.main === module) {
+// CLI Execution (ES Module compatible)
+const isMainModule =
+  typeof process !== "undefined" &&
+  import.meta.url.startsWith("file:") &&
+  process.argv[1] === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
   const myPath = process.argv[1] || "convert.js";
   const args = process.argv.slice(2);
 
