@@ -59,7 +59,7 @@ path/to/file.asm:line[:column]: CODE: message
 
 If `--bin`, `--lst`, or `--sym` are relative paths, they are resolved under `--out-dir` when that flag is present, otherwise relative to the input file directory.
 
-### Examples
+### Command line examples
 
 Write default output names next to the input:
 
@@ -315,7 +315,7 @@ Example:
 
 When assembling with `REALIO = 3`, the output would be:
 
-```
+```text
 Configuration: COMMODORE platform selected
 ```
 
@@ -377,7 +377,7 @@ String escape sequences: `\n` (newline = 0x0A), `\r` (carriage return = 0x0D), `
 | `<=`     |            | Less than or equal               | `1<=2` = 1         |
 | `>=`     |            | Greater than or equal            | `2>=1` = 1         |
 
-### Examples
+### Expression examples
 
 ```asm
 ; Numeric literals

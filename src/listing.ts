@@ -82,175 +82,41 @@ export function formatListing(
 ): string {
   const pageSize = options.pageSize ?? 0;
   const bytesPerLine = options.bytesPerLine ?? 16;
-  const formattedLines: string[] = [];
 
-  let currentPageLineCount = 0;
-  let pageNumber = 1;
-  let hasContentOnCurrentPage = false; // Track if we've output any content yet
+  const pages: string[] = [];
+  let current: string[] = [];
   let currentTitle: string | undefined;
   let currentSubtitle: string | undefined;
 
-  // Pre-compute: for each .page/.eject, collect and mark preceding listing directives to skip
-  const precedingDirectives = new Map<number, number[]>(); // Maps .page index to list of directive indices before it
-  const skipped = new Set<number>();
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (line !== undefined && line.pageBreak) {
-      // Look back for all consecutive listing directives before this .page/.eject
-      const directives: number[] = [];
-      for (let j = i - 1; j >= 0; j--) {
-        const prev = lines[j];
-        if (prev !== undefined && prev.address === null) {
-          const src = prev.source.toUpperCase();
-          // Stop if we hit another .page/.eject (but not .pagesize, .bytesperline)
-          if (
-            src === ".PAGE" ||
-            src.startsWith(".PAGE ") ||
-            src === ".EJECT" ||
-            src.startsWith(".EJECT ")
-          ) {
-            break; // Stop at another page break
-          }
-          // Collect all listing directives
-          if (
-            src === ".TITLE" ||
-            src.startsWith(".TITLE ") ||
-            src === ".SUBTTL" ||
-            src.startsWith(".SUBTTL ") ||
-            src === ".PAGESIZE" ||
-            src.startsWith(".PAGESIZE ") ||
-            src === ".BYTESPERLINE" ||
-            src.startsWith(".BYTESPERLINE ") ||
-            src === ".LIST" ||
-            src.startsWith(".LIST ") ||
-            src === ".NOLIST" ||
-            src.startsWith(".NOLIST ")
-          ) {
-            directives.unshift(j); // Add to front to maintain order
-            skipped.add(j);
-          } else if (prev.bytes.length === 0) {
-            // Continue past non-listing directives (comments/empty lines)
-            continue;
-          } else {
-            break; // Stop at content lines
-          }
-        } else if (prev !== undefined && prev.address !== null) {
-          break; // Stop at content lines
-        }
-      }
-      if (directives.length > 0) {
-        precedingDirectives.set(i, directives);
-      }
+  const flushPage = (): void => {
+    if (current.length === 0) return;
+    if (currentTitle !== undefined || currentSubtitle !== undefined) {
+      current.unshift(""); // Blank line under the page header.
+      if (currentSubtitle !== undefined) current.unshift(currentSubtitle);
+      if (currentTitle !== undefined) current.unshift(currentTitle);
     }
-  }
+    if (pageSize) pages.push(current.splice(0, pageSize).join("\n"));
+    else pages.push(current.splice(0).join("\n"));
+  };
 
-  for (let i = 0; i < lines.length; i++) {
-    if (skipped.has(i)) {
-      continue; // Skip lines already processed
-    }
-
-    const line = lines[i];
-    if (line === undefined) {
-      continue; // Should not happen, but satisfy TypeScript
-    }
-
-    // Update title/subtitle if present on this line
+  for (const line of lines) {
+    // .title / .subttl just update the running page header; they emit no body line.
     if (line.title !== undefined) {
       currentTitle = line.title;
-      // New title clears old subtitle unless new subtitle is also provided
-      currentSubtitle = undefined;
+      currentSubtitle = undefined; // A fresh title clears a stale subtitle.
     }
-    if (line.subtitle !== undefined) {
-      currentSubtitle = line.subtitle;
-    }
+    if (line.subtitle !== undefined) currentSubtitle = line.subtitle;
 
-    // Only apply paging logic to lines with content (address !== null)
-    const isContentLine = line.address !== null;
-
-    // Check if this line forces a page break (can be directive or content)
-    const forcePageBreak = line.pageBreak ?? false;
-
-    if (forcePageBreak) {
-      // Only insert form feed if we already have content on this page
-      if (currentPageLineCount > 0) {
-        formattedLines.push("\f");
-        currentPageLineCount = 0;
-        hasContentOnCurrentPage = false;
-        pageNumber += 1;
-      }
-
-      // Insert page headers (before the directives), whether at start or after form feed
-      if (currentTitle !== undefined || currentSubtitle !== undefined) {
-        if (currentTitle !== undefined) {
-          formattedLines.push(currentTitle);
-        }
-        if (currentSubtitle !== undefined) {
-          formattedLines.push(currentSubtitle);
-        }
-        formattedLines.push(""); // Blank line after header
-        hasContentOnCurrentPage = true;
-      }
-
-      // Now emit any directives that preceded this .page
-      // (they were marked as skipped to remove them from normal output)
-      const precedingDirs = precedingDirectives.get(i);
-      if (precedingDirs !== undefined) {
-        for (const dirIdx of precedingDirs) {
-          const dirLine = lines[dirIdx];
-          if (dirLine !== undefined) {
-            const formatted = formatListingLine(dirLine, { bytesPerLine });
-            formattedLines.push(...formatted);
-          }
-        }
-      }
-    }
-
-    if (isContentLine) {
-      // Check if we need automatic page break due to page size
-      if (pageSize > 0 && currentPageLineCount >= pageSize) {
-        formattedLines.push("\f"); // Form feed for page separation
-        currentPageLineCount = 0;
-        hasContentOnCurrentPage = false;
-        pageNumber += 1;
-
-        // Insert page headers right after the form feed
-        if (currentTitle !== undefined || currentSubtitle !== undefined) {
-          if (currentTitle !== undefined) {
-            formattedLines.push(currentTitle);
-          }
-          if (currentSubtitle !== undefined) {
-            formattedLines.push(currentSubtitle);
-          }
-          formattedLines.push(""); // Blank line after header
-          hasContentOnCurrentPage = true;
-        }
-      }
-
-      // Insert page headers at start of page if not already done (for non-paged content at start of file)
-      if (
-        !hasContentOnCurrentPage &&
-        (currentTitle !== undefined || currentSubtitle !== undefined)
-      ) {
-        if (currentTitle !== undefined) {
-          formattedLines.push(currentTitle);
-        }
-        if (currentSubtitle !== undefined) {
-          formattedLines.push(currentSubtitle);
-        }
-        formattedLines.push(""); // Blank line after header
-        hasContentOnCurrentPage = true;
-      }
-    }
-
-    // Format and output the line
     const formatted = formatListingLine(line, { bytesPerLine });
-    formattedLines.push(...formatted);
+    current.push(...formatted);
 
-    // Only count content lines toward page size
-    if (isContentLine) {
-      currentPageLineCount += formatted.length;
-    }
+    // .page / .eject begin a fresh page; the next body line re-emits the header.
+    if (line.pageBreak) flushPage();
+
+    // Automatic page break once the body fills a page.
+    if (pageSize > 0) while (current.length >= pageSize) flushPage();
   }
 
-  return formattedLines.join("\n");
+  if (pageSize > 0) while (current.length >= pageSize) flushPage();
+  return pages.join("\f");
 }

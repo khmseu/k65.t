@@ -39,9 +39,18 @@ test("assemble supports labels, forward references, directives, and listing form
 
   const listingText = formatListing(result.listing);
   // Check for listing output (format has padding for alignment)
-  assert.ok(/8000\s+A9\s+01\s+start:\s+LDA/.test(listingText));
-  assert.ok(/8005\s+E8\s+loop\s+INX/.test(listingText));
-  assert.ok(/8006\s+D0\s+FD.*8005.*BNE\s+loop/.test(listingText));
+  assert.ok(
+    /8000\s+A9\s+01\s+start:\s+LDA/.test(listingText),
+    JSON.stringify(result.listing, null, 2),
+  );
+  assert.ok(
+    /8005\s+E8\s+loop\s+INX/.test(listingText),
+    JSON.stringify(result.listing, null, 2),
+  );
+  assert.ok(
+    /8006\s+D0\s+FD.*8005.*BNE\s+loop/.test(listingText),
+    JSON.stringify(result.listing, null, 2),
+  );
 });
 
 test("assemble expands simple macros before pass resolution", () => {
@@ -65,6 +74,7 @@ test("assemble expands simple macros before pass resolution", () => {
   );
   assert.ok(
     /9000\s+A9\s+01\s+start\s+lda\s+#1/.test(formatListing(result.listing)),
+    JSON.stringify(result.listing, null, 2),
   );
 });
 

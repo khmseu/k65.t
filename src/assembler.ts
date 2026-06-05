@@ -1175,9 +1175,6 @@ function emitBinary(
   let location = passState.startAddress;
   let minAddress = Number.POSITIVE_INFINITY;
   let maxAddress = Number.NEGATIVE_INFINITY;
-  let pendingTitle: string | undefined;
-  let pendingSubtitle: string | undefined;
-  let pendingPageBreak = false;
 
   // Directive stack for managing nested .if/.repeat scopes
   const stack = new DirectiveStack();
@@ -1192,18 +1189,7 @@ function emitBinary(
     const symbols = passState.lineSymbols[index] ?? passState.symbols;
     const scope = passState.lineScopes[index];
     if (mnemonic === undefined) {
-      const listingLine: ListingLine = {
-        address: location & 0xffff,
-        bytes: [],
-        source: line.raw,
-        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-        ...(pendingPageBreak ? { pageBreak: true } : {}),
-      };
-      pendingTitle = undefined;
-      pendingSubtitle = undefined;
-      pendingPageBreak = false;
-      listing.push(listingLine);
+      listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
       continue;
     }
 
@@ -1212,7 +1198,6 @@ function emitBinary(
       const conditionOperand = line.operands[0];
       let isActive = false;
 
-      // If parent conditional is inactive, child must also be inactive
       const parentFrame = stack.peek();
       if (
         parentFrame?.type === "if" &&
@@ -1232,32 +1217,20 @@ function emitBinary(
         type: "if",
         depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
         startLineNumber: line.lineNumber ?? 0,
-        branches: [
-          {
-            condition: conditionOperand ?? "",
-            lines: [],
-          },
-        ],
+        branches: [{ condition: conditionOperand ?? "", lines: [] }],
         activeBranchIndex: isActive ? 0 : null,
-        currentBranchIndex: 0, // Track which branch we're currently in
+        currentBranchIndex: 0,
       };
       stack.push(ifFrame);
-
-      listing.push({
-        address: null,
-        bytes: [],
-        source: line.raw,
-      });
+      listing.push({ address: null, bytes: [], source: line.raw });
       continue;
     }
 
-    // Handle .ELSEIF: evaluate new condition, update active branch
+    // Handle .ELSEIF
     if (mnemonic === ".ELSEIF") {
       if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        const frame = stack.peek()!;
-        const ifFrame = frame as any;
+        const ifFrame = stack.peek()! as any;
         const conditionOperand = line.operands[0];
-
         let isActive = false;
         if (
           conditionOperand !== undefined &&
@@ -1270,80 +1243,44 @@ function emitBinary(
           );
           isActive = (evaluation.value ?? 0) !== 0;
         }
-
-        // Move to next branch
         ifFrame.currentBranchIndex = ifFrame.branches.length;
-
         if (ifFrame.activeBranchIndex === null && isActive) {
           ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
         }
-
-        ifFrame.branches.push({
-          condition: conditionOperand ?? "",
-          lines: [],
-        });
+        ifFrame.branches.push({ condition: conditionOperand ?? "", lines: [] });
       }
-
-      listing.push({
-        address: null,
-        bytes: [],
-        source: line.raw,
-      });
+      listing.push({ address: null, bytes: [], source: line.raw });
       continue;
     }
 
-    // Handle .ELSE: activate if no other branch was active
+    // Handle .ELSE
     if (mnemonic === ".ELSE") {
       if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        const frame = stack.peek()!;
-        const ifFrame = frame as any;
-
-        // Move to next branch (.else is always the final branch)
+        const ifFrame = stack.peek()! as any;
         ifFrame.currentBranchIndex = ifFrame.branches.length;
-
         if (ifFrame.activeBranchIndex === null) {
           ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
         }
-
-        ifFrame.branches.push({
-          condition: null,
-          lines: [],
-        });
+        ifFrame.branches.push({ condition: null, lines: [] });
       }
-
-      listing.push({
-        address: null,
-        bytes: [],
-        source: line.raw,
-      });
+      listing.push({ address: null, bytes: [], source: line.raw });
       continue;
     }
 
-    // Handle .ENDIF: pop conditional frame
+    // Handle .ENDIF
     if (mnemonic === ".ENDIF") {
       if (!stack.isEmpty() && stack.peek()!.type === "if") {
         stack.pop();
       }
-
-      listing.push({
-        address: null,
-        bytes: [],
-        source: line.raw,
-      });
+      listing.push({ address: null, bytes: [], source: line.raw });
       continue;
     }
 
-    // Check if we're in an inactive branch and should skip this line
+    // Skip lines in inactive conditional branches
     if (stack.isInConditional()) {
-      const frame = stack.peek()!;
-      const ifFrame = frame as any;
-      // Skip if we're in a conditional but this branch isn't the active one
+      const ifFrame = stack.peek()! as any;
       if (ifFrame.currentBranchIndex !== ifFrame.activeBranchIndex) {
-        listing.push({
-          address: null,
-          bytes: [],
-          source: line.raw,
-        });
+        listing.push({ address: null, bytes: [], source: line.raw });
         continue;
       }
     }
@@ -1357,18 +1294,7 @@ function emitBinary(
           scope,
         ) ?? location;
       location = target & 0xffff;
-      const listingLine: ListingLine = {
-        address: location,
-        bytes: [],
-        source: line.raw,
-        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-        ...(pendingPageBreak ? { pageBreak: true } : {}),
-      };
-      pendingTitle = undefined;
-      pendingSubtitle = undefined;
-      pendingPageBreak = false;
-      listing.push(listingLine);
+      listing.push({ address: location, bytes: [], source: line.raw });
       continue;
     }
 
@@ -1386,19 +1312,12 @@ function emitBinary(
                 line.label.toUpperCase(),
               );
       }
-      const listingLine: ListingLine = {
+      listing.push({
         address: location & 0xffff,
         bytes: [],
         target: resolved === null ? undefined : resolved,
         source: line.raw,
-        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-        ...(pendingPageBreak ? { pageBreak: true } : {}),
-      };
-      pendingTitle = undefined;
-      pendingSubtitle = undefined;
-      pendingPageBreak = false;
-      listing.push(listingLine);
+      });
       continue;
     }
 
@@ -1409,18 +1328,11 @@ function emitBinary(
           0xff,
       );
       writeBytes(bytes, location, emitted);
-      const listingLine: ListingLine = {
+      listing.push({
         address: location & 0xffff,
         bytes: emitted,
         source: line.raw,
-        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-        ...(pendingPageBreak ? { pageBreak: true } : {}),
-      };
-      pendingTitle = undefined;
-      pendingSubtitle = undefined;
-      pendingPageBreak = false;
-      listing.push(listingLine);
+      });
       if (emitted.length > 0) {
         minAddress = Math.min(minAddress, location);
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
@@ -1437,25 +1349,17 @@ function emitBinary(
           emitted.push(...literal.bytes);
           continue;
         }
-
         emitted.push(
           (evaluateScopedExpression(operand, symbols, location, scope) ?? 0) &
             0xff,
         );
       }
       writeBytes(bytes, location, emitted);
-      const listingLine: ListingLine = {
+      listing.push({
         address: location & 0xffff,
         bytes: emitted,
         source: line.raw,
-        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-        ...(pendingPageBreak ? { pageBreak: true } : {}),
-      };
-      pendingTitle = undefined;
-      pendingSubtitle = undefined;
-      pendingPageBreak = false;
-      listing.push(listingLine);
+      });
       if (emitted.length > 0) {
         minAddress = Math.min(minAddress, location);
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
@@ -1473,18 +1377,11 @@ function emitBinary(
         emitted.push(value & 0xff, (value >> 8) & 0xff);
       }
       writeBytes(bytes, location, emitted);
-      const listingLine: ListingLine = {
+      listing.push({
         address: location & 0xffff,
         bytes: emitted,
         source: line.raw,
-        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-        ...(pendingPageBreak ? { pageBreak: true } : {}),
-      };
-      pendingTitle = undefined;
-      pendingSubtitle = undefined;
-      pendingPageBreak = false;
-      listing.push(listingLine);
+      });
       if (emitted.length > 0) {
         minAddress = Math.min(minAddress, location);
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
@@ -1510,18 +1407,11 @@ function emitBinary(
         ) ?? 0) & 0xff;
       const emitted = new Array<number>(count).fill(value);
       writeBytes(bytes, location, emitted);
-      const listingLine: ListingLine = {
+      listing.push({
         address: location & 0xffff,
         bytes: emitted,
         source: line.raw,
-        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-        ...(pendingPageBreak ? { pageBreak: true } : {}),
-      };
-      pendingTitle = undefined;
-      pendingSubtitle = undefined;
-      pendingPageBreak = false;
-      listing.push(listingLine);
+      });
       if (emitted.length > 0) {
         minAddress = Math.min(minAddress, location);
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
@@ -1549,18 +1439,11 @@ function emitBinary(
         fillValue,
       );
       writeBytes(bytes, location, emitted);
-      const listingLine: ListingLine = {
+      listing.push({
         address: location & 0xffff,
         bytes: emitted,
         source: line.raw,
-        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-        ...(pendingPageBreak ? { pageBreak: true } : {}),
-      };
-      pendingTitle = undefined;
-      pendingSubtitle = undefined;
-      pendingPageBreak = false;
-      listing.push(listingLine);
+      });
       if (emitted.length > 0) {
         minAddress = Math.min(minAddress, location);
         maxAddress = Math.max(maxAddress, location + emitted.length - 1);
@@ -1570,21 +1453,15 @@ function emitBinary(
     }
 
     if (isListingDirective(mnemonic)) {
-      // Show directives in the listing
-      let directiveListingLine: ListingLine = {
-        address: null,
-        bytes: [],
-        source: line.raw,
-      };
-
-      // Process the directive's effects and attach properties to directive line
+      // Each listing directive carries its own effect on its own listing line.
       if (mnemonic === ".PAGESIZE") {
         const pageExpr = line.operands[0];
         if (pageExpr !== undefined) {
-          const pageSize =
-            evaluateScopedExpression(pageExpr, symbols, location, scope) ?? 0;
-          config.pageSize = pageSize & 0xffff;
+          config.pageSize =
+            (evaluateScopedExpression(pageExpr, symbols, location, scope) ??
+              0) & 0xffff;
         }
+        listing.push({ address: null, bytes: [], source: line.raw });
       } else if (mnemonic === ".BYTESPERLINE") {
         const byteExpr = line.operands[0];
         if (byteExpr !== undefined) {
@@ -1592,49 +1469,33 @@ function emitBinary(
             evaluateScopedExpression(byteExpr, symbols, location, scope) ?? 16;
           config.bytesPerLine = Math.max(1, bytesPerLine & 0xff);
         }
+        listing.push({ address: null, bytes: [], source: line.raw });
       } else if (mnemonic === ".TITLE") {
-        const titleExpr = line.operands.join(" ");
-        pendingTitle = titleExpr.replace(/^"|"$/g, ""); // Strip quotes if present
+        const title = line.operands.join(" ").replace(/^"|"$/g, "");
+        listing.push({ address: null, bytes: [], source: line.raw, title });
       } else if (mnemonic === ".SUBTTL") {
-        const subExpr = line.operands.join(" ");
-        pendingSubtitle = subExpr.replace(/^"|"$/g, ""); // Strip quotes if present
+        const subtitle = line.operands.join(" ").replace(/^"|"$/g, "");
+        listing.push({ address: null, bytes: [], source: line.raw, subtitle });
       } else if (mnemonic === ".PAGE" || mnemonic === ".EJECT") {
-        // Attach page break and any pending metadata to this directive line
-        directiveListingLine = {
-          ...directiveListingLine,
+        listing.push({
+          address: null,
+          bytes: [],
+          source: line.raw,
           pageBreak: true,
-          ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-          ...(pendingSubtitle !== undefined
-            ? { subtitle: pendingSubtitle }
-            : {}),
-        };
-        // Reset pending after attaching to directive
-        pendingTitle = undefined;
-        pendingSubtitle = undefined;
+        });
       } else if (mnemonic === ".PRINT") {
-        // Output arguments to stdout
-        const output = line.operands.join(" ");
-        console.log(output);
+        console.log(line.operands.join(" "));
+        listing.push({ address: null, bytes: [], source: line.raw });
+      } else {
+        // .LIST / .NOLIST: recognized, no formatting effect yet.
+        listing.push({ address: null, bytes: [], source: line.raw });
       }
-      // .LIST and .NOLIST are recognized but don't do anything yet
-      listing.push(directiveListingLine);
       continue;
     }
 
     const opcodeTable = opcodes[mnemonic];
     if (opcodeTable === undefined) {
-      const listingLine: ListingLine = {
-        address: location & 0xffff,
-        bytes: [],
-        source: line.raw,
-        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-        ...(pendingPageBreak ? { pageBreak: true } : {}),
-      };
-      pendingTitle = undefined;
-      pendingSubtitle = undefined;
-      pendingPageBreak = false;
-      listing.push(listingLine);
+      listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
       continue;
     }
 
@@ -1649,36 +1510,18 @@ function emitBinary(
     );
     const opcode = opcodeTable[resolved.mode];
     if (opcode === undefined) {
-      const listingLine: ListingLine = {
-        address: location & 0xffff,
-        bytes: [],
-        source: line.raw,
-        ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-        ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-        ...(pendingPageBreak ? { pageBreak: true } : {}),
-      };
-      pendingTitle = undefined;
-      pendingSubtitle = undefined;
-      pendingPageBreak = false;
-      listing.push(listingLine);
+      listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
       continue;
     }
 
     const emitted = encodeInstructionNoThrow(opcode, resolved);
     writeBytes(bytes, location, emitted.bytes);
-    const listingLine: ListingLine = {
+    listing.push({
       address: location & 0xffff,
       bytes: emitted.bytes,
       target: emitted.target,
       source: line.raw,
-      ...(pendingTitle !== undefined ? { title: pendingTitle } : {}),
-      ...(pendingSubtitle !== undefined ? { subtitle: pendingSubtitle } : {}),
-      ...(pendingPageBreak ? { pageBreak: true } : {}),
-    };
-    pendingTitle = undefined;
-    pendingSubtitle = undefined;
-    pendingPageBreak = false;
-    listing.push(listingLine);
+    });
     minAddress = Math.min(minAddress, location);
     maxAddress = Math.max(maxAddress, location + emitted.bytes.length - 1);
     location += emitted.bytes.length;
