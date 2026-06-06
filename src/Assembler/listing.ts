@@ -117,6 +117,6 @@ export function formatListing(
     if (pageSize > 0) while (current.length >= pageSize) flushPage();
   }
 
-  if (pageSize > 0) while (current.length >= pageSize) flushPage();
-  return pages.join("\f");
+  while (current.length > 0) flushPage();
+  return pages.join("\n\f");
 }

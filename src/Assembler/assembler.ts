@@ -586,7 +586,7 @@ function collectDiagnostics(
       continue;
     }
 
-    if (mnemonic === ".TEXT") {
+    if (mnemonic === ".TEXT" || mnemonic === ".TEXTC") {
       for (const operand of line.operands) {
         const literal = parseTextLiteral(operand);
         if (literal.kind === "invalid") {
@@ -1107,7 +1107,7 @@ function sizeLine(
     };
   }
 
-  if (mnemonic === ".TEXT") {
+  if (mnemonic === ".TEXT" || mnemonic === ".TEXTC") {
     const size = textDirectiveSize(line.operands);
     return { size, nextAddress: location + size };
   }
@@ -1341,7 +1341,7 @@ function emitBinary(
       continue;
     }
 
-    if (mnemonic === ".TEXT") {
+    if (mnemonic === ".TEXT" || mnemonic === ".TEXTC") {
       const emitted: number[] = [];
       for (const operand of line.operands) {
         const literal = parseTextLiteral(operand);
@@ -1353,6 +1353,9 @@ function emitBinary(
           (evaluateScopedExpression(operand, symbols, location, scope) ?? 0) &
             0xff,
         );
+      }
+      if (mnemonic === ".TEXTC" && emitted.length > 0) {
+        emitted.push(emitted.pop()! | 0x80); // Set high bit of last byte for .TEXTC
       }
       writeBytes(bytes, location, emitted);
       listing.push({
@@ -1866,7 +1869,7 @@ function parseTextLiteral(
     if (quote === '"' || quote === "'") {
       return {
         kind: "invalid",
-        message: `Invalid string literal in .text operand: ${operand}`,
+        message: `Invalid string literal in .text or .textc operand: ${operand}`,
       };
     }
     return { kind: "not-literal" };
@@ -1886,7 +1889,7 @@ function parseTextLiteral(
     if (next === undefined) {
       return {
         kind: "invalid",
-        message: `Invalid escape in .text operand: ${operand}`,
+        message: `Invalid escape in .text or .textc operand: ${operand}`,
       };
     }
 
@@ -1923,7 +1926,7 @@ function parseTextLiteral(
 
     return {
       kind: "invalid",
-      message: `Invalid escape in .text operand: ${operand}`,
+      message: `Invalid escape in .text or .textc operand: ${operand}`,
     };
   }
 

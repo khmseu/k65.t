@@ -1,5 +1,5 @@
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { parseLine, parseSource } from "./parser.js";
+import { parseLine, parseSource, setKnownMacros } from "./parser.js";
 
 import { evaluateExpressionDetailed } from "./expressions.js";
 import { readFileSync } from "node:fs";
@@ -312,6 +312,10 @@ function preprocessLines(
         parameters: parsed.operands.slice(1),
         body,
       });
+
+      // Immediately update the parser with the new macro
+      // This ensures macro names are recognized during expansion of subsequent invocations
+      setKnownMacros(new Set(macros.keys()));
       continue;
     }
 

@@ -5,6 +5,25 @@ import { opcodes } from "./opcodes.js";
 
 const commentOnlyPattern = /^\s*(?:[;*].*)?$/;
 
+/**
+ * Set of known macro names (populated by preprocessor)
+ */
+let knownMacros: Set<string> = new Set();
+
+/**
+ * Set the known macros (called by preprocessor before parsing)
+ */
+export function setKnownMacros(macros: Set<string>): void {
+  knownMacros = new Set(macros);
+}
+
+/**
+ * Check if a token is a known macro
+ */
+function isKnownMacro(token: string): boolean {
+  return knownMacros.has(token.toUpperCase());
+}
+
 export function parseSource(text: string): SourceLine[] {
   const lines = text.split(/\r?\n/);
 
@@ -23,7 +42,15 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
   }
 
   const [codePart, commentPart] = splitComment(raw);
-  const tokens = codePart.trim().split(/\s+/).filter(Boolean);
+
+  // Normalize spacing around = operator (but not == or !=)
+  // This allows `count=5` to be parsed the same as `count = 5`
+  const normalized = codePart
+    .split(/\s*((?:[.@]?\w+:?)|"[^"]*"|'[^']*'|[^.@:"'\w\s]+)\s*/)
+    .join(" ");
+  // console.log(`${lineNumber}:R:${codePart}\n${lineNumber}:N:${normalized}`);
+
+  const tokens = normalized.trim().split(/\s+/).filter(Boolean);
 
   if (tokens.length === 0) {
     return { lineNumber, raw, kind: "comment", operands: [] };
@@ -42,9 +69,10 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
   } else if (
     tokens.length === 1 &&
     isLikelyLabel(firstToken) &&
-    !isKnownMnemonic(firstToken)
+    !isKnownMnemonic(firstToken) &&
+    !isKnownMacro(firstToken)
   ) {
-    // Single token that looks like a label and is not a known mnemonic
+    // Single token that looks like a label and is not a known mnemonic or macro
     label = firstToken;
     mnemonic = undefined;
     operands = [];
@@ -63,13 +91,19 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
   } else if (
     tokens.length >= 2 &&
     isLikelyLabel(firstToken) &&
-    !isKnownMnemonic(firstToken)
+    !isKnownMnemonic(firstToken) &&
+    !isKnownMacro(firstToken)
   ) {
-    // Two+ tokens, first looks like label, second is not a known mnemonic/directive.
+    // Two+ tokens, first looks like label, second is not a known mnemonic/directive/macro.
     // E.g., "LOOP LDA #1"
     label = firstToken;
     mnemonic = secondToken;
     operands = collectOperands(tokens.slice(2));
+  } else if (isKnownMacro(firstToken)) {
+    // Macro invocation without a label
+    // E.g., "loadpair 1, 2"
+    mnemonic = firstToken;
+    operands = collectOperands(tokens.slice(1));
   } else {
     // Default: first token is a mnemonic (opcode or directive)
     mnemonic = firstToken;

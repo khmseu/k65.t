@@ -16,8 +16,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
+    "convert": "node --enable-source-maps dist/MACRO-10-Converter/convert.js test/m6502.asm test/m6502.converted.asm",
+    "converted": "node --enable-source-maps dist/Assembler/index.js test/m6502.converted.asm",
     "start": "node --enable-source-maps dist/Assembler/index.js",
-    "convert": "node --enable-source-maps dist/MACRO-10-Converter/convert.js",
     "test": "node --enable-source-maps --test dist/**/*.test.js"
   },
   "engines": {

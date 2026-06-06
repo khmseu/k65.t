@@ -24,7 +24,7 @@ export interface DirectiveMetadata {
     | "structural" // .INCLUDE, .MACRO/.ENDMACRO - defines scope/structure
     | "state-control" // .IF/.ENDIF, .REPEAT/.ENDREPEAT - controls flow
     | "assignment" // .EQU, .SET, = - define constants
-    | "data-emission" // .BYTE, .WORD, .TEXT, .FILL, .ALIGN - emit bytes
+    | "data-emission" // .BYTE, .WORD, .TEXT, .TEXTC, .FILL, .ALIGN - emit bytes
     | "metadata" // .TITLE, .SUBTTL, .PAGE, .LIST, etc - listing metadata
     | "origin"; // .ORG - set program origin
 
@@ -177,6 +177,15 @@ export const DIRECTIVE_TABLE: Record<string, DirectiveMetadata> = {
     category: "data-emission",
     operandCount: "variadic",
     description: "Emit text or character codes",
+  },
+
+  ".TEXTC": {
+    name: ".TEXTC",
+    phase: "assembly",
+    category: "data-emission",
+    operandCount: "variadic",
+    description:
+      "Emit text or character codes with last byte high-bit end marker",
   },
 
   ".FILL": {

@@ -55,6 +55,20 @@
         "panel": "shared",
         "clear": true
       }
+    },
+    {
+      "type": "npm",
+      "script": "convert",
+      "problemMatcher": [],
+      "label": "npm: convert",
+      "detail": "node --enable-source-maps dist/MACRO-10-Converter/convert.js"
+    },
+    {
+      "type": "npm",
+      "script": "converted",
+      "problemMatcher": [],
+      "label": "npm: converted",
+      "detail": "node --enable-source-maps dist/Assembler/index.js test/m6502.converted.asm"
     }
   ]
 }
