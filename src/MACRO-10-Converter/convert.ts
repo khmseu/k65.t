@@ -5,8 +5,6 @@ import { parse } from "path";
 
 /**
  * Converts MACRO-10 assembler format to k65.t format.
- * @param content The original MACRO-10 source code as a string.
- * @returns The converted k65.t source code.
  */
 export function convertMacro10ToK65(content: string): string {
   const lines = content.split(/\r?\n/);
@@ -21,319 +19,236 @@ export function convertMacro10ToK65(content: string): string {
   let angleDepth = 0;
   let inBlockComment = false;
 
+  /**
+   * Applies all regex-based replacements and macro argument expansions iteratively.
+   */
+  function performReplacements(text: string, macroArgs: string[]): string {
+    let current = text;
+    let changed = true;
+    let iterations = 0;
+    while (changed && iterations < 10) {
+      let start = current;
+      for (const arg of macroArgs) {
+        current = current.split(`<${arg}>`).join(`\\${arg}`);
+        const argRegex = new RegExp(`(?<!\\\\)\\b${arg}\\b`, "g");
+        current = current.replace(argRegex, `\\${arg}`);
+      }
+      current = current.replace(/\^O([0-7]+)/g, "0o$1");
+      current = current.replace(
+        /(^|[^A-Za-z0-9_.])\.(?=[^A-Za-z0-9_.]|$)/g,
+        "$1*",
+      );
+      current = current.replace(/%([A-Za-z0-9_]+)/g, "@$1");
+      current = current.replace(/^\s*\$([A-Za-z0-9_]+):/, "_$1:");
+      current = current.replace(/\bLDAI\s+(.*)/, "LDA #$1");
+      current = current.replace(/\bLDXI\s+(.*)/, "LDX #$1");
+      current = current.replace(/\bLDYI\s+(.*)/, "LDY #$1");
+      current = current.replace(/\bADCI\s+(.*)/, "ADC #$1");
+      current = current.replace(/\bSBCI\s+(.*)/, "SBC #$1");
+      current = current.replace(/\bCMPI\s+(.*)/, "CMP #$1");
+      current = current.replace(/\bCPXI\s+(.*)/, "CPX #$1");
+      current = current.replace(/\bCPYI\s+(.*)/, "CPY #$1");
+      current = current.replace(/\bANDI\s+(.*)/, "AND #$1");
+      current = current.replace(/\bORAI\s+(.*)/, "ORA #$1");
+      current = current.replace(/\bEORI\s+(.*)/, "EOR #$1");
+      current = current.replace(/\bASL\s+A\b/, "ASL A");
+      current = current.replace(/\bLSR\s+A\b/, "LSR A");
+      current = current.replace(/\bROL\s+A\b/, "ROL A");
+      current = current.replace(/\bROR\s+A\b/, "ROR A");
+      current = current.replace(/\bLDADY\s+(.*)/, "LDA ($1),Y");
+      current = current.replace(/\bSTADY\s+(.*)/, "STA ($1),Y");
+      current = current.replace(/\bCMPDY\s+(.*)/, "CMP ($1),Y");
+      current = current.replace(/\bSBCDY\s+(.*)/, "SBC ($1),Y");
+      current = current.replace(/^\s*TITLE\s+(.*)/, '.title "$1"');
+      current = current.replace(/^\s*SUBTTL\s+(.*)/, '.subttl "$1"');
+      current = current.replace(/^(\s*)PAGE/, "$1.page");
+      current = current.replace(/^(\s*)ORG\s+(.*)/, "$1.org $2");
+      current = current.replace(/\bBLOCK\s+(.*)/, ".fill $1");
+      current = current.replace(/^(\s*)EXP\s+(.*)/, "$1.word $2");
+      current = current.replace(/^(\s*)SEARCH\s+(.*)/, '$1.include "$2.asm"');
+      current = current.replace(/([@A-Za-z0-9_\$]+)\s*==\s*(.*)/, "$1 = $2");
+      current = current.replace(
+        /\bPRINTX\s*([^\sA-Za-z0-9])(.*?)\1/g,
+        '.print "$2"',
+      );
+      current = current.replace(/^\s*PRINTX\s+([^\/"\s>][^>]*)/, '.print "$1"');
+
+      // Directives with optional spaces
+      current = current.replace(/\bDC\s*"(.*?)"/g, '.textc "$1"');
+      current = current.replace(/\bDT\s*"(.*?)"/g, '.text "$1"');
+      current = current.replace(/\bDC\s*\((.*)\)/g, ".textc $1");
+      current = current.replace(/\bDT\s*\((.*)\)/g, ".text $1");
+      current = current.replace(/\bADR\s*\((.*?)\)/g, ".word $1");
+
+      changed = current !== start;
+      iterations++;
+    }
+    return current;
+  }
+
+  /**
+   * Finalizes a segment of code, extracting labels and applying the .byte rule.
+   */
+  function finalizeAndPush(text: string, macroArgs: string[]) {
+    let current = text;
+    // 1. Iteratively extract labels from the segment
+    while (true) {
+      const labelMatch = current.match(/^(\s*)([@A-Za-z0-9_\$]+)::?(.*)/);
+      if (!labelMatch) break;
+      const indent = labelMatch[1] ?? "";
+      const labelName = labelMatch[2] ?? "";
+      const rest = labelMatch[3] ?? "";
+      outLines.push(
+        performReplacements(indent + labelName + ":", macroArgs).trimEnd(),
+      );
+      current = indent + rest;
+      if (!current.trim()) return;
+    }
+
+    // 2. Final replacements for the remaining instruction/data
+    let final = performReplacements(current, macroArgs).trimEnd();
+    if (!final && !text.includes(";")) return;
+
+    // 3. Standalone number or list of numbers -> .byte
+    const numPart = "(?:0o[0-7]+|[0-9]+|\\$[A-Fa-f0-9]+)";
+    const numRegex = new RegExp(
+      `^(\\s*)(${numPart}(?:\\s*,\\s*${numPart})*)(\\s*(?:;.*)?)$`,
+    );
+    if (numRegex.test(final)) {
+      final = final.replace(numRegex, "$1.byte $2$3");
+    }
+    outLines.push(final);
+  }
+
   for (let line of lines) {
     if (!line.trim() && !inBlockComment) {
       outLines.push("");
       continue;
     }
-
-    // $Z:
-    line = line.replace(/^\s*\$([A-Za-z0-9_]+):/, "_$1:");
-
-    // 1. Handle block comments (COMMENT * ... *)
     if (!inBlockComment && line.includes("COMMENT *")) {
       inBlockComment = true;
       outLines.push(line.replace("COMMENT *", "*").trimEnd());
-      const afterCommentStart = line.split("COMMENT *")[1];
-      if (afterCommentStart && afterCommentStart.includes("*")) {
-        inBlockComment = false;
-      }
+      if (line.split("COMMENT *")[1]?.includes("*")) inBlockComment = false;
       continue;
     }
     if (inBlockComment) {
       outLines.push("* " + line.trimEnd());
-      if (line.includes("*")) {
-        inBlockComment = false;
-      }
+      if (line.includes("*")) inBlockComment = false;
       continue;
     }
 
-    // 2. Convert Octal numbers: ^O123 -> 0o123
-    line = line.replace(/\^O([0-7]+)/g, "0o$1");
+    let processing = true;
+    while (processing) {
+      const lastBlock = blockStack[blockStack.length - 1];
+      const currentArgs =
+        lastBlock && lastBlock.type === "macro" ? lastBlock.args : [];
 
-    // 3. PC reference: . -> * (Only when '.' is a standalone token)
-    line = line.replace(/(^|[^A-Za-z0-9_.])\.(?=[^A-Za-z0-9_.]|$)/g, "$1*");
-
-    // 4. Cheap labels: % -> @
-    line = line.replace(/%([A-Za-z0-9_]+)/g, "@$1");
-
-    // 5. Extract labels to their own lines to make instruction parsing easier
-    const labelMatch = line.match(/^(\s*)([@A-Za-z0-9_\$]+)::?(.*)/);
-    if (
-      labelMatch &&
-      labelMatch[1] !== undefined &&
-      labelMatch[2] !== undefined &&
-      labelMatch[3] !== undefined
-    ) {
-      outLines.push(`${labelMatch[1]}${labelMatch[2]}:`);
-      line = labelMatch[1] + labelMatch[3];
-    }
-
-    // 6. Assignments: == or =
-    line = line.replace(/([@A-Za-z0-9_\$]+)\s*==\s*(.*)/, "$1 = $2");
-    line = line.replace(/^(\s*)([@A-Za-z0-9_\$]+)\s*=\s*(.*)/, "$1$2 = $3");
-
-    // 7. Instructions with Immediate addressing macros
-    line = line.replace(/\bLDAI\s+(.*)/, "LDA #$1");
-    line = line.replace(/\bLDXI\s+(.*)/, "LDX #$1");
-    line = line.replace(/\bLDYI\s+(.*)/, "LDY #$1");
-    line = line.replace(/\bADCI\s+(.*)/, "ADC #$1");
-    line = line.replace(/\bSBCI\s+(.*)/, "SBC #$1");
-    line = line.replace(/\bCMPI\s+(.*)/, "CMP #$1");
-    line = line.replace(/\bCPXI\s+(.*)/, "CPX #$1");
-    line = line.replace(/\bCPYI\s+(.*)/, "CPY #$1");
-    line = line.replace(/\bANDI\s+(.*)/, "AND #$1");
-    line = line.replace(/\bORAI\s+(.*)/, "ORA #$1");
-    line = line.replace(/\bEORI\s+(.*)/, "EOR #$1");
-
-    // 8. Accumulator addressing
-    line = line.replace(/\bASL\s+A\b/, "ASL A");
-    line = line.replace(/\bLSR\s+A\b/, "LSR A");
-    line = line.replace(/\bROL\s+A\b/, "ROL A");
-    line = line.replace(/\bROR\s+A\b/, "ROR A");
-
-    // 9. Indirect Y addressing macros: LDADY foo -> LDA (foo),Y
-    line = line.replace(/\bLDADY\s+(.*)/, "LDA ($1),Y");
-    line = line.replace(/\bSTADY\s+(.*)/, "STA ($1),Y");
-    line = line.replace(/\bCMPDY\s+(.*)/, "CMP ($1),Y");
-    line = line.replace(/\bSBCDY\s+(.*)/, "SBC ($1),Y");
-
-    // 10. Directives
-    line = line.replace(/^\s*TITLE\s+(.*)/, '.title "$1"');
-    line = line.replace(/^\s*SUBTTL\s+(.*)/, '.subttl "$1"');
-    line = line.replace(/^\s*PAGE/, ".page");
-    line = line.replace(/^\s*ORG\s+(.*)/, ".org $1");
-    line = line.replace(/\bBLOCK\s+(.*)/, ".fill $1");
-    line = line.replace(/^\s*EXP\s+(.*)/, ".word $1");
-    line = line.replace(/^\s*SEARCH\s+(.*)/, '.include "$1.asm"');
-
-    // 11. Strings (DC, DT, DCI)
-    line = line.replace(/\bDC\s*"(.*?)"/g, '.textc "$1"');
-    line = line.replace(/\bDT\s*"(.*?)"/g, '.text "$1"');
-
-    // 12. Address words
-    line = line.replace(/\bADR\((.*?)\)/g, ".word $1");
-
-    // 13. Numbers without directive -> .byte
-    if (/^\s*(0o[0-7]+|[0-9]+|\$[@A-Fa-f0-9]+)\s*(;.*)?$/.test(line)) {
-      line = line.replace(
-        /^(\s*)(0o[0-7]+|[0-9]+|\$[@A-Fa-f0-9]+)(\s*(;.*)?)$/,
-        "$1.byte $2$3",
-      );
-    }
-
-    // 14. Block Starters
-    let match;
-    if (
-      (match = line.match(
-        /^(\s*)DEFINE\s+([A-Za-z0-9_\$]+)(?:\s*\((.*?)\))?\s*,?\s*<(.*)/,
-      )) &&
-      match[1] !== undefined &&
-      match[2] !== undefined &&
-      match[4] !== undefined
-    ) {
-      const indent = match[1];
-      const name = match[2];
-      const argsStr = match[3] || "";
-      const args = argsStr
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s);
-
-      outLines.push(
-        `${indent}.macro ${name}${args.length > 0 ? ", " + args.join(", ") : ""}`,
-      );
-      blockStack.push({ type: "macro", args, startDepth: angleDepth });
-      angleDepth++;
-      line = indent + match[4];
-    } else if (
-      (match = line.match(
-        /^(\s*)DEFINE\s+([A-Za-z0-9_\$]+)(?:\s*\((.*?)\))?\s*,(.*)/,
-      )) &&
-      match[1] !== undefined &&
-      match[2] !== undefined &&
-      match[4] !== undefined
-    ) {
-      // DEFINE block without a '<' (usually a single line macro command)
-      const indent = match[1];
-      const name = match[2];
-      const argsStr = match[3] || "";
-      const args = argsStr
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s);
-
-      outLines.push(
-        `${indent}.macro ${name}${args.length > 0 ? ", " + args.join(", ") : ""}`,
-      );
-      let outRest = match[4];
-      for (const arg of args) {
-        outRest = outRest.replace(new RegExp(`\\b${arg}\\b`, "g"), `\\${arg}`);
+      // 1. Extract Labels (at start of line)
+      const labelMatch = line.match(/^(\s*)([@A-Za-z0-9_\$]+)::?(.*)/);
+      if (labelMatch) {
+        finalizeAndPush(
+          (labelMatch[1] ?? "") + (labelMatch[2] ?? "") + ":",
+          currentArgs,
+        );
+        line = (labelMatch[1] ?? "") + (labelMatch[3] ?? "");
+        if (!line.trim()) break;
+        continue;
       }
-      // Pre-process PRINTX in outRest
-      outRest = outRest.replace(
-        /\bPRINTX\s*([^\sA-Za-z0-9])(.*?)\1/g,
-        '.print "$2"',
-      );
-      outRest = outRest.replace(/^\s*PRINTX\s+([^\/">][^>]*)/, '.print "$1"');
 
-      outLines.push(`${indent}    ${outRest.trim()}`);
-      outLines.push(`${indent}.endmacro`);
-      line = "";
-    } else if (
-      (match = line.match(/^(\s*)(IFE|IFN)\s+(.*?),?\s*<(.*)/)) &&
-      match[1] !== undefined &&
-      match[2] !== undefined &&
-      match[3] !== undefined &&
-      match[4] !== undefined
-    ) {
-      const indent = match[1];
-      const condType = match[2];
-      const cond = match[3];
-
-      let outCond = "";
-      const minusMatch = cond.match(
-        /^([A-Za-z0-9_\$]+)\s*-\s*([A-Za-z0-9_\$]+)$/,
-      );
+      // 2. Check for Block Starters
+      let match;
       if (
-        minusMatch &&
-        minusMatch[1] !== undefined &&
-        minusMatch[2] !== undefined
+        (match = line.match(
+          /^(\s*)DEFINE\s+([A-Za-z0-9_\$]+)(?:\s*\((.*?)\))?\s*,?\s*<(.*)/,
+        ))
       ) {
-        if (condType === "IFE")
-          outCond = `${minusMatch[1]} == ${minusMatch[2]}`;
-        else if (condType === "IFN")
-          outCond = `${minusMatch[1]} != ${minusMatch[2]}`;
-      } else {
-        if (condType === "IFE") outCond = `(${cond}) == 0`;
-        else if (condType === "IFN") outCond = `(${cond}) != 0`;
-      }
-
-      outLines.push(`${indent}.if ${outCond}`);
-      blockStack.push({ type: "if", args: [], startDepth: angleDepth });
-      angleDepth++;
-      line = indent + match[4];
-    } else if (
-      (match = line.match(/^(\s*)(IF1|IF2)\s*,\s*<(.*)/)) &&
-      match[1] !== undefined &&
-      match[2] !== undefined &&
-      match[3] !== undefined
-    ) {
-      // Handle IF1,< or IF2,< without an expression
-      const indent = match[1];
-      const condType = match[2];
-
-      let outCond = "";
-      if (condType === "IF1") outCond = `1`;
-      else if (condType === "IF2") outCond = `1`;
-
-      outLines.push(`${indent}.if ${outCond}`);
-      blockStack.push({ type: "if", args: [], startDepth: angleDepth });
-      angleDepth++;
-      line = indent + match[3];
-    } else if (
-      (match = line.match(/^(\s*)REPEAT\s+(.*?),?\s*<(.*)/)) &&
-      match[1] !== undefined &&
-      match[2] !== undefined &&
-      match[3] !== undefined
-    ) {
-      const indent = match[1];
-      const count = match[2];
-
-      outLines.push(`${indent}.repeat ${count}`);
-      blockStack.push({ type: "repeat", args: [], startDepth: angleDepth });
-      angleDepth++;
-      line = indent + match[3];
-    }
-
-    // Process PRINTX on the remainder of the line
-    line = line.replace(/\bPRINTX\s*([^\sA-Za-z0-9])(.*?)\1/g, '.print "$2"');
-    line = line.replace(/^\s*PRINTX\s+([^\/">][^>]*)/, '.print "$1"');
-
-    // 11. Strings (DC, DT, DCI)
-    line = line.replace(/\bDC\s*\((.*)\)/g, ".textc $1");
-    line = line.replace(/\bDT\s*\((.*)\)/g, ".text $1");
-
-    line = line.replace(/^\s*ORG\s+(.*)/, ".org $1");
-
-    // 13. Numbers without directive -> .byte
-    if (/^\s*(0o[0-7]+|[0-9]+|\$[@A-Fa-f0-9]+)\s*([>;].*)?$/.test(line)) {
-      line = line.replace(
-        /^(\s*)(0o[0-7]+|[0-9]+|\$[@A-Fa-f0-9]+)(\s*([>;].*)?)$/,
-        "$1.byte $2$3",
-      );
-    }
-
-    if (!line.trim() && !line.includes(";")) continue;
-
-    // 15. Character by character scan for <, >, and macro arguments
-    let outLine = "";
-    let i = 0;
-    while (i < line.length) {
-      const c = line[i];
-
-      // Match identifiers for macro args
-      const wordMatch = line.substring(i).match(/^[@A-Za-z0-9_\$]+/);
-      if (wordMatch && wordMatch[0] !== undefined) {
-        const word = wordMatch[0];
-        let isArg = false;
-        const lastBlock = blockStack[blockStack.length - 1];
-        if (lastBlock && lastBlock.type === "macro") {
-          if (lastBlock.args.includes(word)) {
-            outLine += "\\" + word;
-            isArg = true;
-          }
-        }
-        if (!isArg) {
-          outLine += word;
-        }
-        i += word.length;
-        continue;
-      }
-
-      if (c === "<") {
-        outLine += "(";
+        const args = (match[3] ?? "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s);
+        finalizeAndPush(
+          `${match[1]}.macro ${match[2]}${args.length > 0 ? ", " + args.join(", ") : ""}`,
+          currentArgs,
+        );
+        blockStack.push({ type: "macro", args, startDepth: angleDepth });
         angleDepth++;
-        i++;
+        line = (match[1] ?? "") + (match[4] ?? "");
+        continue;
+      } else if (
+        (match = line.match(/^(\s*)(IFE|IFN|IF1|IF2)\s+(.*?),?\s*<(.*)/))
+      ) {
+        const cond = performReplacements(match[3] ?? "", currentArgs);
+        let outCond = match[2] === "IFE" ? `(${cond}) == 0` : `(${cond}) != 0`;
+        const minus = cond.match(/^([A-Za-z0-9_\$]+)\s*-\s*([A-Za-z0-9_\$]+)$/);
+        if (minus && minus[1] && minus[2])
+          outCond =
+            match[2] === "IFE"
+              ? `${minus[1]} == ${minus[2]}`
+              : `${minus[1]} != ${minus[2]}`;
+        if (match[2] === "IF1" || match[2] === "IF2") outCond = "1";
+        finalizeAndPush(`${match[1]}.if ${outCond}`, currentArgs);
+        blockStack.push({ type: "if", args: [], startDepth: angleDepth });
+        angleDepth++;
+        line = (match[1] ?? "") + (match[4] ?? "");
+        continue;
+      } else if ((match = line.match(/^(\s*)(IFE|IFN|IF1|IF2)\s*,?\s*<(.*)/))) {
+        finalizeAndPush(`${match[1]}.if 1`, currentArgs);
+        blockStack.push({ type: "if", args: [], startDepth: angleDepth });
+        angleDepth++;
+        line = (match[1] ?? "") + (match[3] ?? "");
+        continue;
+      } else if ((match = line.match(/^(\s*)REPEAT\s+(.*?),?\s*<(.*)/))) {
+        const count = performReplacements(match[2] ?? "", currentArgs);
+        finalizeAndPush(`${match[1]}.repeat ${count}`, currentArgs);
+        blockStack.push({ type: "repeat", args: [], startDepth: angleDepth });
+        angleDepth++;
+        line = (match[1] ?? "") + (match[3] ?? "");
         continue;
       }
 
-      if (c === ">") {
-        angleDepth--;
-        const lastBlock = blockStack[blockStack.length - 1];
-        if (lastBlock && angleDepth === lastBlock.startDepth) {
-          const block = blockStack.pop()!;
-          const blockIndent = outLine.match(/^\s*/)?.[0] || "";
-          if (outLine.trim()) {
-            outLines.push(outLine);
-          }
-          outLine = blockIndent; // Preserve indentation for the line after the block (like comments)
-
-          if (block.type === "macro") outLines.push(`${blockIndent}.endmacro`);
-          else if (block.type === "if") outLines.push(`${blockIndent}.endif`);
-          else if (block.type === "repeat")
-            outLines.push(`${blockIndent}.endrepeat`);
-        } else {
-          outLine += ")";
+      // 3. Instruction/Data scan
+      let outLine = "";
+      let i = 0;
+      while (i < line.length) {
+        const c = line[i];
+        if (c === "<") {
+          outLine += "(";
+          angleDepth++;
+          i++;
+          continue;
         }
+        if (c === ">") {
+          angleDepth--;
+          const last = blockStack[blockStack.length - 1];
+          if (last && angleDepth === last.startDepth) {
+            blockStack.pop();
+            if (outLine.trim()) finalizeAndPush(outLine, currentArgs);
+            const indent = outLine.match(/^\s*/)?.[0] || "";
+            outLine = indent;
+            const ender =
+              last.type === "macro"
+                ? ".endmacro"
+                : last.type === "if"
+                  ? ".endif"
+                  : ".endrepeat";
+            finalizeAndPush(indent + ender, currentArgs);
+          } else {
+            outLine += ")";
+          }
+          i++;
+          continue;
+        }
+        outLine += c;
         i++;
-        continue;
       }
-
-      outLine += c;
-      i++;
-    }
-
-    if (outLine.trim() || outLine.includes(";")) {
-      // Ignored directives
-      if (/^\s*(SALL|RADIX)/.test(outLine)) {
-        outLines.push(";" + outLine.trimEnd());
-      } else {
-        outLines.push(outLine.trimEnd());
+      if (outLine.trim() || outLine.includes(";")) {
+        if (/^\s*(SALL|RADIX)/.test(outLine))
+          outLines.push(";" + outLine.trimEnd());
+        else finalizeAndPush(outLine, currentArgs);
       }
+      processing = false;
     }
   }
-
   return outLines.join("\n");
 }
 
@@ -350,23 +265,22 @@ const isMainModule =
       parse(new URL(import.meta.url).pathname).name);
 
 if (isMainModule) {
-  const myPath = process.argv[1] || "convert.js";
+  // @ts-ignore
   const args = process.argv.slice(2);
-
   if (args.length < 2) {
+    // @ts-ignore
+    const myPath = process.argv[1] || "convert.js";
     console.error(`Usage: node ${myPath} <input.asm> <output.asm>`);
+    // @ts-ignore
     process.exit(1);
   }
-
   const inputFile = args[0];
   const outputFile = args[1];
-
   if (!inputFile || !outputFile) {
     console.error("Invalid arguments.");
     // @ts-ignore
     process.exit(1);
   }
-
   try {
     const content = fs.readFileSync(inputFile, "utf-8");
     const converted = convertMacro10ToK65(content);

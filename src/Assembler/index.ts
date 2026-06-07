@@ -14,14 +14,16 @@ async function main(): Promise<void> {
 
   if (result.diagnostics.length > 0) {
     for (const diagnostic of result.diagnostics) {
+      const lineNum = diagnostic.location.lineNumber;
+      const text = diagnostic.location.text ?? "";
       const position =
         diagnostic.column === undefined
-          ? `${diagnostic.lineNumber}`
-          : `${diagnostic.lineNumber}:${diagnostic.column}`;
+          ? `${lineNum}`
+          : `${lineNum}:${diagnostic.column}`;
       console.error(
         `${inputPath}:${position}: ${diagnostic.code}: ${diagnostic.message}`,
       );
-      console.error(`  ${diagnostic.source}`);
+      console.error(`  ${text}`);
     }
     error(`Assembly failed with ${result.diagnostics.length} diagnostic(s)`);
   }

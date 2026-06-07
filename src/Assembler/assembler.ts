@@ -11,13 +11,13 @@ import {
 } from "./opcodes.js";
 import { getDirectiveMetadata, isDirective } from "./directives.js";
 import { PreprocessError, preprocessSource } from "./preprocessor.js";
-import { DirectiveStack } from "./directive-stack.js";
-import { directiveAwareIteration } from "./directive-iterator.js";
+import { IncrementalPreprocessor } from "./incremental-preprocessor.js";
 import type {
   AssemblyDiagnostic,
   AssemblyResult,
   ListingLine,
   SourceLine,
+  SourceLocation,
   SymbolEntry,
 } from "./types.js";
 
@@ -45,8 +45,8 @@ interface PassState {
 }
 
 interface ListingConfig {
-  pageSize: number; // Lines per page (0 = no paging)
-  bytesPerLine: number; // Bytes to display per output line
+  pageSize: number;
+  bytesPerLine: number;
   title?: string;
   subtitle?: string;
 }
@@ -61,7 +61,8 @@ export function assemble(
   options: AssembleOptions = {},
 ): AssemblyResult {
   let preprocessed: string = "";
-  let diagnostics: AssemblyDiagnostic[] = [];
+  const diagnostics: AssemblyDiagnostic[] = [];
+
   try {
     preprocessed = preprocessSource(sourceText, {
       ...(options.sourcePath !== undefined
@@ -70,14 +71,32 @@ export function assemble(
       ...(options.readFile !== undefined ? { readFile: options.readFile } : {}),
     });
   } catch (error) {
-    diagnostics = [mapPreprocessError(error)];
+    const filename = options.sourcePath ?? "<source>";
+    diagnostics.push({
+      code: "E_PREPROCESS",
+      level: "error",
+      message: error instanceof Error ? error.message : "Preprocessing failed",
+      location: {
+        filename,
+        lineNumber: 1,
+      },
+    });
+    return {
+      binary: new Uint8Array(),
+      listing: [],
+      symbols: [],
+      startAddress: 0,
+      diagnostics,
+      bytesPerLine: 16,
+      pageSize: 0,
+    };
   }
 
-  const parsed = parseSource(preprocessed);
-
-  const sized = runSizingPasses(parsed);
-  diagnostics = diagnostics.concat(collectDiagnostics(parsed, sized));
-  const emitted = emitBinary(parsed, sized);
+  const sized = runSizingPasses(preprocessed, options.sourcePath);
+  diagnostics.push(
+    ...collectDiagnostics(preprocessed, sized, options.sourcePath),
+  );
+  const emitted = emitBinary(preprocessed, sized, options.sourcePath);
   const symbols: SymbolEntry[] = Array.from(sized.symbols.entries())
     .map(([name, value]) => ({ name: displaySymbolName(name), value }))
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -93,33 +112,14 @@ export function assemble(
   };
 }
 
-function mapPreprocessError(error: unknown): AssemblyDiagnostic {
-  if (error instanceof PreprocessError) {
-    return {
-      code: error.code,
-      lineNumber: error.lineNumber > 0 ? error.lineNumber : 1,
-      message: error.message,
-      source: error.source,
-    };
-  }
-
-  return {
-    code: "E_PREPROCESS",
-    lineNumber: 1,
-    message: error instanceof Error ? error.message : "Preprocessing failed",
-    source: "",
-  };
-}
-
-function runSizingPasses(lines: readonly SourceLine[]): PassState {
+function runSizingPasses(
+  sourceText: string,
+  sourcePath: string | undefined,
+): PassState {
   let symbols = new Map<string, number>();
-  let previousSizes = new Array<number>(lines.length).fill(0);
-  let previousLineSymbols = lines.map(
-    () => new Map<string, number>() as ReadonlyMap<string, number>,
-  );
-  let previousLineScopes = new Array<string | undefined>(lines.length).fill(
-    undefined,
-  );
+  let previousSizes = new Array<number>();
+  let previousLineSymbols: ReadonlyMap<string, number>[] = [];
+  let previousLineScopes: Array<string | undefined> = [];
   let startAddress = 0;
   let endAddress = 0;
 
@@ -134,144 +134,14 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
     let maxAddress = Number.NEGATIVE_INFINITY;
     let currentScope: string | undefined;
 
-    // Directive stack for managing nested .if/.repeat scopes
-    const stack = new DirectiveStack();
+    const preprocessor = new IncrementalPreprocessor(sourceText, {
+      ...(sourcePath !== undefined ? { sourcePath } : {}),
+    });
 
-    for (const line of lines) {
+    let line: SourceLine | null;
+    while ((line = preprocessor.nextLine(nextSymbols)) !== null) {
       const mnemonic = normalizeMnemonic(line.mnemonic);
 
-      // Handle .IF directive: evaluate condition and push frame
-      if (line.kind === "code" && mnemonic === ".IF") {
-        const conditionOperand = line.operands[0];
-        let isActive = false;
-
-        // If parent conditional is inactive, child must also be inactive
-        const parentFrame = stack.peek();
-        if (
-          parentFrame?.type === "if" &&
-          (parentFrame as any).activeBranchIndex === null
-        ) {
-          isActive = false;
-        } else if (conditionOperand !== undefined) {
-          const evaluation = evaluateExpressionDetailed(
-            conditionOperand,
-            nextSymbols,
-            location,
-          );
-          isActive = (evaluation.value ?? 0) !== 0;
-        }
-
-        const ifFrame: any = {
-          type: "if",
-          depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
-          startLineNumber: line.lineNumber ?? 0,
-          branches: [
-            {
-              condition: conditionOperand ?? "",
-              lines: [],
-            },
-          ],
-          activeBranchIndex: isActive ? 0 : null,
-          currentBranchIndex: 0, // Track which branch we're currently in
-        };
-        stack.push(ifFrame);
-
-        lineSymbols.push(new Map(nextSymbols));
-        lineScopes.push(currentScope);
-        lineSizes.push(0);
-        continue;
-      }
-
-      // Handle .ELSEIF: evaluate new condition, update active branch
-      if (line.kind === "code" && mnemonic === ".ELSEIF") {
-        if (!stack.isEmpty() && stack.peek()!.type === "if") {
-          const frame = stack.peek()!;
-          const ifFrame = frame as any;
-          const conditionOperand = line.operands[0];
-
-          let isActive = false;
-          if (
-            conditionOperand !== undefined &&
-            ifFrame.activeBranchIndex === null
-          ) {
-            const evaluation = evaluateExpressionDetailed(
-              conditionOperand,
-              nextSymbols,
-              location,
-            );
-            isActive = (evaluation.value ?? 0) !== 0;
-          }
-
-          // Move to next branch
-          ifFrame.currentBranchIndex = ifFrame.branches.length;
-
-          if (ifFrame.activeBranchIndex === null && isActive) {
-            ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
-          }
-
-          ifFrame.branches.push({
-            condition: conditionOperand ?? "",
-            lines: [],
-          });
-        }
-
-        lineSymbols.push(new Map(nextSymbols));
-        lineScopes.push(currentScope);
-        lineSizes.push(0);
-        continue;
-      }
-
-      // Handle .ELSE: activate if no other branch was active
-      if (line.kind === "code" && mnemonic === ".ELSE") {
-        if (!stack.isEmpty() && stack.peek()!.type === "if") {
-          const frame = stack.peek()!;
-          const ifFrame = frame as any;
-
-          // Move to next branch (.else is always the final branch)
-          ifFrame.currentBranchIndex = ifFrame.branches.length;
-
-          if (ifFrame.activeBranchIndex === null) {
-            ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
-          }
-
-          ifFrame.branches.push({
-            condition: null,
-            lines: [],
-          });
-        }
-
-        lineSymbols.push(new Map(nextSymbols));
-        lineScopes.push(currentScope);
-        lineSizes.push(0);
-        continue;
-      }
-
-      // Handle .ENDIF: pop conditional frame
-      if (line.kind === "code" && mnemonic === ".ENDIF") {
-        if (!stack.isEmpty() && stack.peek()!.type === "if") {
-          stack.pop();
-        }
-
-        lineSymbols.push(new Map(nextSymbols));
-        lineScopes.push(currentScope);
-        lineSizes.push(0);
-        continue;
-      }
-
-      // Check if we're in an inactive branch and should skip this line
-      if (stack.isInConditional()) {
-        const frame = stack.peek()!;
-        const ifFrame = frame as any;
-        // Skip if we're in a conditional but this branch isn't the active one
-        if (ifFrame.currentBranchIndex !== ifFrame.activeBranchIndex) {
-          lineSymbols.push(new Map(nextSymbols));
-          lineScopes.push(currentScope);
-          lineSizes.push(0);
-          continue;
-        }
-      }
-
-      // Regular line processing
       if (line.kind !== "code") {
         lineSymbols.push(new Map(nextSymbols));
         lineScopes.push(currentScope);
@@ -300,11 +170,11 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
           expr === undefined
             ? null
             : evaluateScopedExpression(
-                expr,
-                lineSymbolState,
-                location,
-                currentScope,
-              );
+              expr,
+              lineSymbolState,
+              location,
+              currentScope,
+            );
         if (resolved !== null) {
           nextSymbols.set(
             normalizeLabelName(line.label, currentScope),
@@ -368,125 +238,29 @@ function runSizingPasses(lines: readonly SourceLine[]): PassState {
 }
 
 function collectDiagnostics(
-  lines: readonly SourceLine[],
+  sourceText: string,
   passState: PassState,
+  sourcePath: string | undefined,
 ): AssemblyDiagnostic[] {
   const diagnostics: AssemblyDiagnostic[] = [];
   let location = passState.startAddress;
-  const stack = new DirectiveStack();
 
-  for (const [index, line] of lines.entries()) {
+  const preprocessor = new IncrementalPreprocessor(sourceText, {
+    ...(sourcePath !== undefined ? { sourcePath } : {}),
+  });
+
+  let line: SourceLine | null;
+  while ((line = preprocessor.nextLine(passState.symbols)) !== null) {
     if (line.kind !== "code") {
       continue;
     }
 
     const mnemonic = normalizeMnemonic(line.mnemonic);
-    const symbols = passState.lineSymbols[index] ?? passState.symbols;
-    const scope = passState.lineScopes[index];
+    const symbols = passState.symbols;
+    const scope = undefined;
+
     if (mnemonic === undefined) {
       continue;
-    }
-
-    // Handle .IF directive
-    if (mnemonic === ".IF") {
-      const conditionOperand = line.operands[0];
-      let isActive = false;
-
-      // If parent conditional is inactive, child must also be inactive
-      const parentFrame = stack.peek();
-      if (
-        parentFrame?.type === "if" &&
-        (parentFrame as any).activeBranchIndex === null
-      ) {
-        isActive = false;
-      } else if (conditionOperand !== undefined) {
-        const evaluation = evaluateExpressionDetailed(
-          conditionOperand,
-          symbols,
-          location,
-        );
-        isActive = (evaluation.value ?? 0) !== 0;
-      }
-
-      const ifFrame: any = {
-        type: "if",
-        depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
-        startLineNumber: line.lineNumber ?? 0,
-        branches: [
-          {
-            condition: conditionOperand ?? "",
-            lines: [],
-          },
-        ],
-        activeBranchIndex: isActive ? 0 : null,
-        currentBranchIndex: 0,
-      };
-      stack.push(ifFrame);
-      continue;
-    }
-
-    // Handle .ELSEIF
-    if (mnemonic === ".ELSEIF") {
-      if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        const frame = stack.peek()!;
-        const ifFrame = frame as any;
-        const conditionOperand = line.operands[0];
-        let isActive = false;
-        if (
-          conditionOperand !== undefined &&
-          ifFrame.activeBranchIndex === null
-        ) {
-          const evaluation = evaluateExpressionDetailed(
-            conditionOperand,
-            symbols,
-            location,
-          );
-          isActive = (evaluation.value ?? 0) !== 0;
-        }
-        ifFrame.currentBranchIndex = ifFrame.branches.length;
-        if (ifFrame.activeBranchIndex === null && isActive) {
-          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
-        }
-        ifFrame.branches.push({
-          condition: conditionOperand ?? "",
-          lines: [],
-        });
-      }
-      continue;
-    }
-
-    // Handle .ELSE
-    if (mnemonic === ".ELSE") {
-      if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        const frame = stack.peek()!;
-        const ifFrame = frame as any;
-        ifFrame.currentBranchIndex = ifFrame.branches.length;
-        if (ifFrame.activeBranchIndex === null) {
-          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
-        }
-        ifFrame.branches.push({
-          condition: null,
-          lines: [],
-        });
-      }
-      continue;
-    }
-
-    // Handle .ENDIF
-    if (mnemonic === ".ENDIF") {
-      if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        stack.pop();
-      }
-      continue;
-    }
-
-    // Skip lines in inactive conditional branches
-    if (stack.isInConditional()) {
-      const frame = stack.peek()!;
-      const ifFrame = frame as any;
-      if (ifFrame.currentBranchIndex !== ifFrame.activeBranchIndex) {
-        continue;
-      }
     }
 
     if (mnemonic === ".ORG") {
@@ -516,7 +290,6 @@ function collectDiagnostics(
             ),
           );
         } else {
-          // Update location to the new origin when .ORG is valid
           location = evaluation.value & 0xffff;
         }
       }
@@ -586,7 +359,7 @@ function collectDiagnostics(
       continue;
     }
 
-    if (mnemonic === ".TEXT" || mnemonic === ".TEXTC") {
+    if (mnemonic === ".TEXT") {
       for (const operand of line.operands) {
         const literal = parseTextLiteral(operand);
         if (literal.kind === "invalid") {
@@ -612,6 +385,41 @@ function collectDiagnostics(
               line,
               evaluation.errorCode ?? "E_EXPR_INVALID",
               `text expression error (${operand}): ${evaluation.error ?? "invalid expression"}`,
+              evaluation.errorColumn ?? undefined,
+            ),
+          );
+        }
+      }
+      location += textDirectiveSize(line.operands);
+      continue;
+    }
+
+    if (mnemonic === ".TEXTC") {
+      for (const operand of line.operands) {
+        const literal = parseTextLiteral(operand);
+        if (literal.kind === "invalid") {
+          diagnostics.push(
+            makeDiagnostic(line, "E_DIR_TEXT_LITERAL", literal.message),
+          );
+          continue;
+        }
+
+        if (literal.kind === "bytes") {
+          continue;
+        }
+
+        const evaluation = evaluateScopedExpressionDetailed(
+          operand,
+          symbols,
+          location,
+          scope,
+        );
+        if (evaluation.value === null) {
+          diagnostics.push(
+            makeDiagnostic(
+              line,
+              evaluation.errorCode ?? "E_EXPR_INVALID",
+              `textc expression error (${operand}): ${evaluation.error ?? "invalid expression"}`,
               evaluation.errorColumn ?? undefined,
             ),
           );
@@ -774,12 +582,9 @@ function collectDiagnostics(
     }
 
     if (isListingDirective(mnemonic)) {
-      // Listing directives don't affect assembly, just metadata
       continue;
     }
 
-    // Control flow directives (.if, .elseif, .else, .endif, .repeat, .endrepeat)
-    // are handled in runSizingPasses and emitBinary, so skip them here
     if (isDirective(mnemonic)) {
       continue;
     }
@@ -856,224 +661,6 @@ function collectDiagnostics(
   }
 
   return diagnostics;
-}
-
-function resolveOperandDiagnostic(
-  mnemonic: string,
-  operands: readonly string[],
-  symbols: ReadonlyMap<string, number>,
-  location: number,
-  scope: string | undefined,
-): { code: string; message: string; column?: number } {
-  const operand = operands.join(", ").trim();
-  if (operand.length === 0) {
-    return { code: "E_OPERAND_MISSING", message: "missing operand" };
-  }
-
-  let expression = operand;
-
-  if (branchMnemonics.has(mnemonic)) {
-    expression = operand;
-  } else {
-    const immediate = operand.match(/^#\s*(.+)$/i);
-    if (immediate?.[1] !== undefined) {
-      expression = immediate[1];
-    } else {
-      const indexedIndirect = operand.match(/^\(\s*(.+)\s*,\s*X\s*\)$/i);
-      const indirectIndexed = operand.match(/^\(\s*(.+)\s*\)\s*,\s*Y\s*$/i);
-      const indirect = operand.match(/^\(\s*(.+)\s*\)$/i);
-      const xIndexed = operand.match(/^(.+)\s*,\s*X\s*$/i);
-      const yIndexed = operand.match(/^(.+)\s*,\s*Y\s*$/i);
-
-      if (indexedIndirect?.[1] !== undefined) {
-        expression = indexedIndirect[1];
-      } else if (indirectIndexed?.[1] !== undefined) {
-        expression = indirectIndexed[1];
-      } else if (indirect?.[1] !== undefined) {
-        expression = indirect[1];
-      } else if (xIndexed?.[1] !== undefined) {
-        expression = xIndexed[1];
-      } else if (yIndexed?.[1] !== undefined) {
-        expression = yIndexed[1];
-      }
-    }
-  }
-
-  const evaluation = evaluateScopedExpressionDetailed(
-    expression,
-    symbols,
-    location,
-    scope,
-  );
-  return {
-    code: evaluation.errorCode ?? "E_EXPR_INVALID",
-    message: evaluation.error ?? "invalid expression",
-    ...(evaluation.errorColumn !== null
-      ? { column: evaluation.errorColumn }
-      : {}),
-  };
-}
-
-function buildListingOnly(
-  lines: readonly SourceLine[],
-  passState: PassState,
-): ListingLine[] {
-  const listing: ListingLine[] = [];
-  let location = passState.startAddress;
-  const stack = new DirectiveStack();
-
-  for (const [index, line] of lines.entries()) {
-    if (line.kind !== "code") {
-      listing.push({ address: null, bytes: [], source: line.raw });
-      continue;
-    }
-
-    const mnemonic = normalizeMnemonic(line.mnemonic);
-    const symbols = passState.lineSymbols[index] ?? passState.symbols;
-    const scope = passState.lineScopes[index];
-
-    // Handle .ORG directive
-    if (mnemonic === ".ORG") {
-      const target =
-        (evaluateScopedExpression(
-          line.operands[0] ?? "0",
-          symbols,
-          location,
-          scope,
-        ) ?? location) & 0xffff;
-      location = target;
-      listing.push({
-        address: null,
-        bytes: [],
-        source: line.raw,
-      });
-      continue;
-    }
-
-    // Handle .IF directive
-    if (mnemonic === ".IF") {
-      // If parent conditional is inactive, child must also be inactive
-      const parentFrame = stack.peek();
-      let isActive =
-        parentFrame?.type === "if" &&
-        (parentFrame as any).activeBranchIndex === null
-          ? false
-          : (evaluateExpressionDetailed(
-              line.operands[0] ?? "0",
-              symbols,
-              location,
-            ).value ?? 0) !== 0;
-      const ifFrame: any = {
-        type: "if",
-        depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
-        startLineNumber: line.lineNumber ?? 0,
-        branches: [
-          {
-            condition: line.operands[0] ?? "",
-            lines: [],
-          },
-        ],
-        activeBranchIndex: isActive ? 0 : null,
-        currentBranchIndex: 0,
-      };
-      stack.push(ifFrame);
-      listing.push({
-        address: null,
-        bytes: [],
-        source: line.raw,
-      });
-      continue;
-    }
-
-    // Handle .ELSEIF
-    if (mnemonic === ".ELSEIF") {
-      if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        const frame = stack.peek()!;
-        const ifFrame = frame as any;
-        const isActive =
-          ifFrame.activeBranchIndex === null &&
-          (evaluateExpressionDetailed(
-            line.operands[0] ?? "0",
-            symbols,
-            location,
-          ).value ?? 0) !== 0;
-        ifFrame.currentBranchIndex = ifFrame.branches.length;
-        if (isActive) {
-          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
-        }
-        ifFrame.branches.push({
-          condition: line.operands[0] ?? "",
-          lines: [],
-        });
-      }
-      listing.push({
-        address: null,
-        bytes: [],
-        source: line.raw,
-      });
-      continue;
-    }
-
-    // Handle .ELSE
-    if (mnemonic === ".ELSE") {
-      if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        const frame = stack.peek()!;
-        const ifFrame = frame as any;
-        ifFrame.currentBranchIndex = ifFrame.branches.length;
-        if (ifFrame.activeBranchIndex === null) {
-          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
-        }
-        ifFrame.branches.push({
-          condition: null,
-          lines: [],
-        });
-      }
-      listing.push({
-        address: null,
-        bytes: [],
-        source: line.raw,
-      });
-      continue;
-    }
-
-    // Handle .ENDIF
-    if (mnemonic === ".ENDIF") {
-      if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        stack.pop();
-      }
-      listing.push({
-        address: null,
-        bytes: [],
-        source: line.raw,
-      });
-      continue;
-    }
-
-    // Skip lines in inactive conditional branches
-    if (stack.isInConditional()) {
-      const frame = stack.peek()!;
-      const ifFrame = frame as any;
-      if (ifFrame.currentBranchIndex !== ifFrame.activeBranchIndex) {
-        listing.push({
-          address: null,
-          bytes: [],
-          source: line.raw,
-        });
-        continue;
-      }
-    }
-
-    // Use precomputed line size from sizing pass
-    const lineSize = passState.lineSizes[index] ?? 0;
-    listing.push({
-      address: location & 0xffff,
-      bytes: [],
-      source: line.raw,
-    });
-    location += lineSize;
-  }
-
-  return listing;
 }
 
 function sizeLine(
@@ -1161,8 +748,9 @@ function sizeLine(
 }
 
 function emitBinary(
-  lines: readonly SourceLine[],
+  sourceText: string,
   passState: PassState,
+  sourcePath: string | undefined,
 ): {
   binary: Uint8Array;
   listing: ListingLine[];
@@ -1176,113 +764,24 @@ function emitBinary(
   let minAddress = Number.POSITIVE_INFINITY;
   let maxAddress = Number.NEGATIVE_INFINITY;
 
-  // Directive stack for managing nested .if/.repeat scopes
-  const stack = new DirectiveStack();
+  const preprocessor = new IncrementalPreprocessor(sourceText, {
+    ...(sourcePath !== undefined ? { sourcePath } : {}),
+  });
 
-  for (const [index, line] of lines.entries()) {
+  let line: SourceLine | null;
+  while ((line = preprocessor.nextLine(passState.symbols)) !== null) {
     if (line.kind !== "code") {
       listing.push({ address: null, bytes: [], source: line.raw });
       continue;
     }
 
     const mnemonic = normalizeMnemonic(line.mnemonic);
-    const symbols = passState.lineSymbols[index] ?? passState.symbols;
-    const scope = passState.lineScopes[index];
+    const symbols = passState.symbols;
+    const scope = undefined;
+
     if (mnemonic === undefined) {
       listing.push({ address: location & 0xffff, bytes: [], source: line.raw });
       continue;
-    }
-
-    // Handle .IF directive: evaluate condition and push frame
-    if (mnemonic === ".IF") {
-      const conditionOperand = line.operands[0];
-      let isActive = false;
-
-      const parentFrame = stack.peek();
-      if (
-        parentFrame?.type === "if" &&
-        (parentFrame as any).activeBranchIndex === null
-      ) {
-        isActive = false;
-      } else if (conditionOperand !== undefined) {
-        const evaluation = evaluateExpressionDetailed(
-          conditionOperand,
-          symbols,
-          location,
-        );
-        isActive = (evaluation.value ?? 0) !== 0;
-      }
-
-      const ifFrame: any = {
-        type: "if",
-        depth: stack.isEmpty() ? 0 : stack.peek()!.depth + 1,
-        startLineNumber: line.lineNumber ?? 0,
-        branches: [{ condition: conditionOperand ?? "", lines: [] }],
-        activeBranchIndex: isActive ? 0 : null,
-        currentBranchIndex: 0,
-      };
-      stack.push(ifFrame);
-      listing.push({ address: null, bytes: [], source: line.raw });
-      continue;
-    }
-
-    // Handle .ELSEIF
-    if (mnemonic === ".ELSEIF") {
-      if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        const ifFrame = stack.peek()! as any;
-        const conditionOperand = line.operands[0];
-        let isActive = false;
-        if (
-          conditionOperand !== undefined &&
-          ifFrame.activeBranchIndex === null
-        ) {
-          const evaluation = evaluateExpressionDetailed(
-            conditionOperand,
-            symbols,
-            location,
-          );
-          isActive = (evaluation.value ?? 0) !== 0;
-        }
-        ifFrame.currentBranchIndex = ifFrame.branches.length;
-        if (ifFrame.activeBranchIndex === null && isActive) {
-          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
-        }
-        ifFrame.branches.push({ condition: conditionOperand ?? "", lines: [] });
-      }
-      listing.push({ address: null, bytes: [], source: line.raw });
-      continue;
-    }
-
-    // Handle .ELSE
-    if (mnemonic === ".ELSE") {
-      if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        const ifFrame = stack.peek()! as any;
-        ifFrame.currentBranchIndex = ifFrame.branches.length;
-        if (ifFrame.activeBranchIndex === null) {
-          ifFrame.activeBranchIndex = ifFrame.currentBranchIndex;
-        }
-        ifFrame.branches.push({ condition: null, lines: [] });
-      }
-      listing.push({ address: null, bytes: [], source: line.raw });
-      continue;
-    }
-
-    // Handle .ENDIF
-    if (mnemonic === ".ENDIF") {
-      if (!stack.isEmpty() && stack.peek()!.type === "if") {
-        stack.pop();
-      }
-      listing.push({ address: null, bytes: [], source: line.raw });
-      continue;
-    }
-
-    // Skip lines in inactive conditional branches
-    if (stack.isInConditional()) {
-      const ifFrame = stack.peek()! as any;
-      if (ifFrame.currentBranchIndex !== ifFrame.activeBranchIndex) {
-        listing.push({ address: null, bytes: [], source: line.raw });
-        continue;
-      }
     }
 
     if (mnemonic === ".ORG") {
@@ -1306,11 +805,11 @@ function emitBinary(
           expr === undefined
             ? null
             : evaluateScopedExpression(
-                expr,
-                passState.symbols,
-                location,
-                line.label.toUpperCase(),
-              );
+              expr,
+              passState.symbols,
+              location,
+              line.label.toUpperCase(),
+            );
       }
       listing.push({
         address: location & 0xffff,
@@ -1341,7 +840,7 @@ function emitBinary(
       continue;
     }
 
-    if (mnemonic === ".TEXT" || mnemonic === ".TEXTC") {
+    if (mnemonic === ".TEXT") {
       const emitted: number[] = [];
       for (const operand of line.operands) {
         const literal = parseTextLiteral(operand);
@@ -1349,14 +848,46 @@ function emitBinary(
           emitted.push(...literal.bytes);
           continue;
         }
+
         emitted.push(
           (evaluateScopedExpression(operand, symbols, location, scope) ?? 0) &
-            0xff,
+          0xff,
         );
       }
-      if (mnemonic === ".TEXTC" && emitted.length > 0) {
-        emitted.push(emitted.pop()! | 0x80); // Set high bit of last byte for .TEXTC
+      writeBytes(bytes, location, emitted);
+      listing.push({
+        address: location & 0xffff,
+        bytes: emitted,
+        source: line.raw,
+      });
+      if (emitted.length > 0) {
+        minAddress = Math.min(minAddress, location);
+        maxAddress = Math.max(maxAddress, location + emitted.length - 1);
       }
+      location += emitted.length;
+      continue;
+    }
+
+    if (mnemonic === ".TEXTC") {
+      const emitted: number[] = [];
+      for (const operand of line.operands) {
+        const literal = parseTextLiteral(operand);
+        if (literal.kind === "bytes") {
+          emitted.push(...literal.bytes);
+          continue;
+        }
+
+        emitted.push(
+          (evaluateScopedExpression(operand, symbols, location, scope) ?? 0) &
+          0xff,
+        );
+      }
+
+      if (emitted.length > 0) {
+        emitted[emitted.length - 1] =
+          (emitted[emitted.length - 1]! | 0x80) & 0xff;
+      }
+
       writeBytes(bytes, location, emitted);
       listing.push({
         address: location & 0xffff,
@@ -1456,15 +987,19 @@ function emitBinary(
     }
 
     if (isListingDirective(mnemonic)) {
-      // Each listing directive carries its own effect on its own listing line.
+      let directiveListingLine: ListingLine = {
+        address: null,
+        bytes: [],
+        source: line.raw,
+      };
+
       if (mnemonic === ".PAGESIZE") {
         const pageExpr = line.operands[0];
         if (pageExpr !== undefined) {
-          config.pageSize =
-            (evaluateScopedExpression(pageExpr, symbols, location, scope) ??
-              0) & 0xffff;
+          const pageSize =
+            evaluateScopedExpression(pageExpr, symbols, location, scope) ?? 0;
+          config.pageSize = pageSize & 0xffff;
         }
-        listing.push({ address: null, bytes: [], source: line.raw });
       } else if (mnemonic === ".BYTESPERLINE") {
         const byteExpr = line.operands[0];
         if (byteExpr !== undefined) {
@@ -1472,27 +1007,28 @@ function emitBinary(
             evaluateScopedExpression(byteExpr, symbols, location, scope) ?? 16;
           config.bytesPerLine = Math.max(1, bytesPerLine & 0xff);
         }
-        listing.push({ address: null, bytes: [], source: line.raw });
       } else if (mnemonic === ".TITLE") {
         const title = line.operands.join(" ").replace(/^"|"$/g, "");
-        listing.push({ address: null, bytes: [], source: line.raw, title });
+        directiveListingLine = {
+          ...directiveListingLine,
+          title,
+        };
       } else if (mnemonic === ".SUBTTL") {
         const subtitle = line.operands.join(" ").replace(/^"|"$/g, "");
-        listing.push({ address: null, bytes: [], source: line.raw, subtitle });
+        directiveListingLine = {
+          ...directiveListingLine,
+          subtitle,
+        };
       } else if (mnemonic === ".PAGE" || mnemonic === ".EJECT") {
-        listing.push({
-          address: null,
-          bytes: [],
-          source: line.raw,
+        directiveListingLine = {
+          ...directiveListingLine,
           pageBreak: true,
-        });
+        };
       } else if (mnemonic === ".PRINT") {
         console.log(line.operands.join(" "));
-        listing.push({ address: null, bytes: [], source: line.raw });
-      } else {
-        // .LIST / .NOLIST: recognized, no formatting effect yet.
-        listing.push({ address: null, bytes: [], source: line.raw });
       }
+
+      listing.push(directiveListingLine);
       continue;
     }
 
@@ -1694,7 +1230,7 @@ function isAssignmentDirective(mnemonic: string | undefined): boolean {
 
 function isListingDirective(mnemonic: string | undefined): boolean {
   const meta = getDirectiveMetadata(mnemonic ?? "");
-  return meta?.category === "metadata";
+  return meta?.category === "metadata" || mnemonic === ".TEXTC";
 }
 
 function assignmentDirectiveName(mnemonic: string): string {
@@ -1821,12 +1357,19 @@ function makeDiagnostic(
   message: string,
   column?: number,
 ): AssemblyDiagnostic {
+  const filename = line.location?.filename ?? "<source>";
+  const lineNumber = line.location?.lineNumber ?? line.lineNumber;
+
   return {
     code,
-    lineNumber: line.lineNumber,
-    ...(column !== undefined ? { column } : {}),
+    level: "error",
     message,
-    source: line.raw,
+    location: {
+      filename,
+      lineNumber,
+      text: line.raw,
+    },
+    ...(column !== undefined ? { column } : {}),
   };
 }
 
@@ -1869,7 +1412,7 @@ function parseTextLiteral(
     if (quote === '"' || quote === "'") {
       return {
         kind: "invalid",
-        message: `Invalid string literal in .text or .textc operand: ${operand}`,
+        message: `Invalid string literal in .text operand: ${operand}`,
       };
     }
     return { kind: "not-literal" };
@@ -1889,7 +1432,7 @@ function parseTextLiteral(
     if (next === undefined) {
       return {
         kind: "invalid",
-        message: `Invalid escape in .text or .textc operand: ${operand}`,
+        message: `Invalid escape in .text operand: ${operand}`,
       };
     }
 
@@ -1926,7 +1469,7 @@ function parseTextLiteral(
 
     return {
       kind: "invalid",
-      message: `Invalid escape in .text or .textc operand: ${operand}`,
+      message: `Invalid escape in .text operand: ${operand}`,
     };
   }
 
@@ -1979,4 +1522,60 @@ function mapsEqual(
   }
 
   return true;
+}
+
+function resolveOperandDiagnostic(
+  mnemonic: string,
+  operands: readonly string[],
+  symbols: ReadonlyMap<string, number>,
+  location: number,
+  scope: string | undefined,
+): { code: string; message: string; column?: number } {
+  const operand = operands.join(", ").trim();
+  if (operand.length === 0) {
+    return { code: "E_OPERAND_MISSING", message: "missing operand" };
+  }
+
+  let expression = operand;
+
+  if (branchMnemonics.has(mnemonic)) {
+    expression = operand;
+  } else {
+    const immediate = operand.match(/^#\s*(.+)$/i);
+    if (immediate?.[1] !== undefined) {
+      expression = immediate[1];
+    } else {
+      const indexedIndirect = operand.match(/^\(\s*(.+)\s*,\s*X\s*\)$/i);
+      const indirectIndexed = operand.match(/^\(\s*(.+)\s*\)\s*,\s*Y\s*$/i);
+      const indirect = operand.match(/^\(\s*(.+)\s*\)$/i);
+      const xIndexed = operand.match(/^(.+)\s*,\s*X\s*$/i);
+      const yIndexed = operand.match(/^(.+)\s*,\s*Y\s*$/i);
+
+      if (indexedIndirect?.[1] !== undefined) {
+        expression = indexedIndirect[1];
+      } else if (indirectIndexed?.[1] !== undefined) {
+        expression = indirectIndexed[1];
+      } else if (indirect?.[1] !== undefined) {
+        expression = indirect[1];
+      } else if (xIndexed?.[1] !== undefined) {
+        expression = xIndexed[1];
+      } else if (yIndexed?.[1] !== undefined) {
+        expression = yIndexed[1];
+      }
+    }
+  }
+
+  const evaluation = evaluateScopedExpressionDetailed(
+    expression,
+    symbols,
+    location,
+    scope,
+  );
+  return {
+    code: evaluation.errorCode ?? "E_EXPR_INVALID",
+    message: evaluation.error ?? "invalid expression",
+    ...(evaluation.errorColumn !== null
+      ? { column: evaluation.errorColumn }
+      : {}),
+  };
 }
