@@ -34,11 +34,11 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
   const trimmed = raw.trim();
 
   if (trimmed.length === 0) {
-    return { lineNumber, raw, kind: "blank", operands: [] };
+    return { lineNumber, raw, kind: "blank", operands: [], locationChain: [] };
   }
 
   if (commentOnlyPattern.test(raw)) {
-    return { lineNumber, raw, kind: "comment", operands: [] };
+    return { lineNumber, raw, kind: "comment", operands: [], locationChain: [] };
   }
 
   const [codePart, commentPart] = splitComment(raw);
@@ -48,12 +48,11 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
   const normalized = codePart
     .split(/\s*((?:[.@]?\w+:?)|"[^"]*"|'[^']*'|[^.@:"'\w\s]+)\s*/)
     .join(" ");
-  // console.log(`${lineNumber}:R:${codePart}\n${lineNumber}:N:${normalized}`);
 
   const tokens = normalized.trim().split(/\s+/).filter(Boolean);
 
   if (tokens.length === 0) {
-    return { lineNumber, raw, kind: "comment", operands: [] };
+    return { lineNumber, raw, kind: "comment", operands: [], locationChain: [] };
   }
 
   const firstToken = tokens[0]!;
@@ -72,7 +71,6 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
     !isKnownMnemonic(firstToken) &&
     !isKnownMacro(firstToken)
   ) {
-    // Single token that looks like a label and is not a known mnemonic or macro
     label = firstToken;
     mnemonic = undefined;
     operands = [];
@@ -82,9 +80,6 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
     secondToken !== undefined &&
     isDirectiveOrAssignment(secondToken)
   ) {
-    // First token is a label, second token is a directive or assignment operator.
-    // Treat as label + directive even if first token looks opcode-like.
-    // E.g., "ADC = 100", "LDA .equ 10", "VAL .set 5"
     label = firstToken;
     mnemonic = secondToken;
     operands = collectOperands(tokens.slice(2));
@@ -94,18 +89,13 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
     !isKnownMnemonic(firstToken) &&
     !isKnownMacro(firstToken)
   ) {
-    // Two+ tokens, first looks like label, second is not a known mnemonic/directive/macro.
-    // E.g., "LOOP LDA #1"
     label = firstToken;
     mnemonic = secondToken;
     operands = collectOperands(tokens.slice(2));
   } else if (isKnownMacro(firstToken)) {
-    // Macro invocation without a label
-    // E.g., "loadpair 1, 2"
     mnemonic = firstToken;
     operands = collectOperands(tokens.slice(1));
   } else {
-    // Default: first token is a mnemonic (opcode or directive)
     mnemonic = firstToken;
     operands = collectOperands(tokens.slice(1));
   }
@@ -115,6 +105,7 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
     raw,
     kind: "code",
     operands,
+    locationChain: [],
     ...(label !== undefined ? { label } : {}),
     ...(mnemonic !== undefined ? { mnemonic } : {}),
     ...(commentPart !== undefined ? { comment: commentPart } : {}),
@@ -238,20 +229,11 @@ function isLikelyLabel(token: string): boolean {
   return /^(?:@)?[A-Za-z_][A-Za-z0-9_]*$/.test(token);
 }
 
-/**
- * Check if a token is a known mnemonic (opcode or directive).
- * Uses lookup-based validation instead of heuristics like "3 letters = opcode".
- */
 function isKnownMnemonic(token: string): boolean {
   const upper = token.toUpperCase();
   return opcodes[upper] !== undefined || isDirective(upper);
 }
 
-/**
- * Check if a token is a directive or assignment operator.
- * Used to determine if a 3-letter identifier should be treated as a label.
- * E.g., "ADC = 100" → label="ADC" (not mnemonic="ADC")
- */
 function isDirectiveOrAssignment(token: string): boolean {
   const upper = token.toUpperCase();
   return isDirective(upper);
