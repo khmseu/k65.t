@@ -234,9 +234,10 @@ function collectDiagnostics(sourceText: string, passState: PassState, sourcePath
       continue;
     }
     if (mnemonic === ".BYTE") {
+      const currentLine = line;
       line.operands.forEach((expression) => {
         const evaluation = evaluateScopedExpressionDetailed(expression, symbols, location, scope);
-        if (evaluation.value === null) diagnostics.push(makeDiagnostic(line, evaluation.errorCode ?? "E_EXPR_INVALID", `byte expression error (${expression}): ${evaluation.error ?? "invalid expression"}`, evaluation.errorColumn ?? undefined));
+        if (evaluation.value === null) diagnostics.push(makeDiagnostic(currentLine!, evaluation.errorCode ?? "E_EXPR_INVALID", `byte expression error (${expression}): ${evaluation.error ?? "invalid expression"}`, evaluation.errorColumn ?? undefined));
       });
       location += line.operands.length;
       continue;
@@ -253,9 +254,10 @@ function collectDiagnostics(sourceText: string, passState: PassState, sourcePath
       continue;
     }
     if (mnemonic === ".WORD") {
+      const currentLine = line;
       line.operands.forEach((expression) => {
         const evaluation = evaluateScopedExpressionDetailed(expression, symbols, location, scope);
-        if (evaluation.value === null) diagnostics.push(makeDiagnostic(line, evaluation.errorCode ?? "E_EXPR_INVALID", `word expression error (${expression}): ${evaluation.error ?? "invalid expression"}`, evaluation.errorColumn ?? undefined));
+        if (evaluation.value === null) diagnostics.push(makeDiagnostic(currentLine!, evaluation.errorCode ?? "E_EXPR_INVALID", `word expression error (${expression}): ${evaluation.error ?? "invalid expression"}`, evaluation.errorColumn ?? undefined));
       });
       location += line.operands.length * 2;
       continue;
