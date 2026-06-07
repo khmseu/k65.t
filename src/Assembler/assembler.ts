@@ -196,11 +196,20 @@ function collectDiagnostics(sourceText: string, passState: PassState, sourcePath
     ...(sourcePath !== undefined ? { sourcePath } : {}),
   });
   let line: SourceLine | null;
+  let lineIndex = 0;
+  let currentScope: string | undefined;
   while ((line = preprocessor.nextLine(passState.symbols)) !== null) {
-    if (line.kind !== "code") continue;
+    if (line.kind !== "code") {
+      lineIndex += 1;
+      continue;
+    }
     const mnemonic = normalizeMnemonic(line.mnemonic);
-    const symbols = passState.symbols;
-    const scope = undefined;
+    const symbols = new Map(passState.symbols);
+    const scope = passState.lineScopes[lineIndex];
+    lineIndex += 1;
+    if (line.label !== undefined && !isCheapLabel(line.label)) {
+      currentScope = normalizeGlobalLabel(line.label);
+    }
     if (mnemonic === undefined) continue;
     if (mnemonic === ".ORG") {
       const expression = line.operands[0];
@@ -220,6 +229,7 @@ function collectDiagnostics(sourceText: string, passState: PassState, sourcePath
       else {
         const evaluation = evaluateScopedExpressionDetailed(expression, symbols, location, scope);
         if (evaluation.value === null) diagnostics.push(makeDiagnostic(line, evaluation.errorCode ?? "E_EXPR_INVALID", `${assignmentDirectiveName(mnemonic)} expression error (${expression}): ${evaluation.error ?? "invalid expression"}`, evaluation.errorColumn ?? undefined));
+        else if (line.label !== undefined) symbols.set(normalizeLabelName(line.label, scope), evaluation.value);
       }
       continue;
     }
@@ -348,15 +358,21 @@ function emitBinary(sourceText: string, passState: PassState, sourcePath: string
   let location = passState.startAddress;
   let minAddress = Number.POSITIVE_INFINITY;
   let maxAddress = Number.NEGATIVE_INFINITY;
+  let currentScope: string | undefined;
   const preprocessor = new IncrementalPreprocessor(sourceText, {
     ...(sourcePath !== undefined ? { sourcePath } : {}),
   });
   let line: SourceLine | null;
+  let lineIndex = 0;
   while ((line = preprocessor.nextLine(passState.symbols)) !== null) {
     if (line.kind !== "code") { listing.push({ address: null, bytes: [], source: line.raw, target: undefined }); continue; }
     const mnemonic = normalizeMnemonic(line.mnemonic);
-    const symbols = passState.symbols;
-    const scope = undefined;
+    const symbols = new Map(passState.symbols);
+    const scope = passState.lineScopes[lineIndex];
+    lineIndex += 1;
+    if (line.label !== undefined && !isCheapLabel(line.label)) {
+      currentScope = normalizeGlobalLabel(line.label);
+    }
     if (mnemonic === undefined) { listing.push({ address: location & 0xffff, bytes: [], source: line.raw, target: undefined }); continue; }
     if (mnemonic === ".ORG") {
       const target = evaluateScopedExpression(line.operands[0] ?? "0", symbols, location, scope) ?? location;
@@ -368,7 +384,8 @@ function emitBinary(sourceText: string, passState: PassState, sourcePath: string
       let resolved: number | null = null;
       if (line.label !== undefined) {
         const expr = line.operands[0];
-        resolved = expr === undefined ? null : evaluateScopedExpression(expr, passState.symbols, location, line.label.toUpperCase());
+        resolved = expr === undefined ? null : evaluateScopedExpression(expr, symbols, location, scope);
+        if (resolved !== null) symbols.set(normalizeLabelName(line.label, scope), resolved);
       }
       listing.push({ address: location & 0xffff, bytes: [], target: resolved === null ? undefined : resolved, source: line.raw });
       continue;
@@ -530,7 +547,7 @@ function normalizeLabelName(label: string, scope: string | undefined): string { 
 function rewriteCheapLabels(expression: string, scope: string | undefined): string { return expression.replace(/@([A-Za-z_][A-Za-z0-9_]*)/g, (_, localName: string) => normalizeLabelName(`@${localName}`, scope)); }
 function evaluateScopedExpression(expression: string, symbols: ReadonlyMap<string, number>, location: number, scope: string | undefined): number | null { return evaluateExpression(rewriteCheapLabels(expression, scope), symbols, location); }
 function evaluateScopedExpressionDetailed(expression: string, symbols: ReadonlyMap<string, number>, location: number, scope: string | undefined) { return evaluateExpressionDetailed(rewriteCheapLabels(expression, scope), symbols, location); }
-function displaySymbolName(name: string): string { const match = name.match(/^__CHEAP_LABEL__(.+)__([A-Z_][A-Z0-9_]*)$/); if (match?.[1] === undefined || match[2] === undefined) return name; return match[1] === CHEAP_LABEL_ROOT ? `@${match[2]}` : `${match[1]}.@${match[2]}`; }
+function displaySymbolName(name: string): string { const match = name.match(/^__CHEAP_LABEL__(ROOT|[A-Z0-9_.]+)__([A-Z_][A-Z0-9_]*)$/); if (match?.[1] === undefined || match[2] === undefined) return name; return match[1] === CHEAP_LABEL_ROOT ? `@${match[2]}` : `${match[1]}.@${match[2]}`; }
 function encodeInstruction(opcode: number, modeResolution: ModeResolution, location: number): { bytes: number[]; target?: number } { const value = modeResolution.value ?? 0; switch (modeResolution.mode) { case "implied": case "accumulator": return { bytes: [opcode] }; case "immediate": case "zeropage": case "zeropageX": case "zeropageY": case "indexedIndirect": case "indirectIndexed": return { bytes: [opcode, value & 0xff] }; case "relative": { const signed = computeBranchOffset(value, location); if (signed < -128 || signed > 127) throw new Error(`Branch out of range at ${toHex16(location)}`); return { bytes: [opcode, signed & 0xff], target: value & 0xffff }; } case "absolute": case "absoluteX": case "absoluteY": case "indirect": return { bytes: [opcode, value & 0xff, (value >> 8) & 0xff] }; } }
 function computeBranchOffset(target: number, location: number): number { const nextPc = (location + 2) & 0xffff; const delta = ((target & 0xffff) - nextPc) & 0xffff; return delta > 0x7f ? delta - 0x10000 : delta; }
 function modeNeedsValue(mode: AddressingMode): boolean { return mode !== "implied" && mode !== "accumulator"; }

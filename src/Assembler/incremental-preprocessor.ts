@@ -319,11 +319,17 @@ export class IncrementalPreprocessor {
   }
 
   private isInInactiveConditional(): boolean {
-    const ifFrame = this.directiveStack.find((f) => f.type === "if") as ConditionalFrame | undefined;
-    if (!ifFrame) return false;
-    const activeBranch = ifFrame.branches[ifFrame.activeBranchIndex ?? -1];
-    const currentBranch = ifFrame.branches[ifFrame.currentBranchIndex];
-    return activeBranch !== currentBranch;
+    // Check all .if frames on the stack, not just the outermost one
+    for (const frame of this.directiveStack) {
+      if (frame.type !== "if") continue;
+      const activeBranch = frame.branches[frame.activeBranchIndex ?? -1];
+      const currentBranch = frame.branches[frame.currentBranchIndex];
+      // If any .if frame is in an inactive branch, we're in an inactive conditional
+      if (activeBranch !== currentBranch) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private evaluateCondition(condition: string, symbols: ReadonlyMap<string, number>): boolean {
