@@ -182,19 +182,21 @@ export class IncrementalPreprocessor {
         this.handleMacroDefinition(parsed, line.location);
         return null;
       }
+      if (mnemonic === ".INCLUDE") {
+        this.handleIncludeDirective(parsed, line.location);
+        return null;
+      }
+      // Check for inactive conditional BEFORE processing .REPEAT/.ENDREPEAT
+      // This prevents .repeat blocks inside inactive conditionals from corrupting the directive stack
+      if (this.isInInactiveConditional()) {
+        return null;
+      }
       if (mnemonic === ".REPEAT") {
         this.handleRepeatDirective(parsed, symbols, line.location);
         return null;
       }
       if (mnemonic === ".ENDREPEAT") {
         this.handleEndrepeatDirective(line.location);
-        return null;
-      }
-      if (mnemonic === ".INCLUDE") {
-        this.handleIncludeDirective(parsed, line.location);
-        return null;
-      }
-      if (this.isInInactiveConditional()) {
         return null;
       }
       const expanded = this.expandMacro(parsed, line, symbols);
