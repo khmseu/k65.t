@@ -8,7 +8,7 @@ import type {
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { evaluateExpressionDetailed } from "./expressions.js";
-import { parseLine } from "./parser.js";
+import { parseLine, setKnownMacros } from "./parser.js";
 import { readFileSync } from "node:fs";
 
 const MAX_EXPANSION_DEPTH = 25;
@@ -226,6 +226,8 @@ export class IncrementalPreprocessor {
       body.push(bodyLine);
     }
     this.macros.set(name, { name, parameters, body, lineNumber: location.lineNumber });
+    // Update the parser's known macros set so it recognizes macro names during parsing
+    setKnownMacros(new Set(this.macros.keys()));
   }
 
   private handleIfDirective(condition: string, isActive: boolean, location: SourceLocation): void {
