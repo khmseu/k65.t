@@ -24,12 +24,12 @@ export interface SourceLine {
   readonly lineNumber: number;
   readonly raw: string;
   readonly kind: "blank" | "comment" | "code";
-  readonly operands?: readonly string[];
+  readonly operands: readonly string[];
   readonly label?: string;
   readonly mnemonic?: string;
   readonly comment?: string;
   readonly location?: SourceLocation;
-  readonly locationChain?: readonly SourceLocation[];
+  readonly locationChain: readonly SourceLocation[];
 }
 
 /**
@@ -78,7 +78,7 @@ export interface ListingLine {
   readonly address: number | null;
   readonly bytes: readonly number[];
   readonly source: string;
-  readonly target?: number;
+  readonly target: number | undefined;
   readonly title?: string;
   readonly subtitle?: string;
   readonly pageBreak?: boolean;
