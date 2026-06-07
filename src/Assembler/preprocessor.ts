@@ -147,7 +147,39 @@ function preprocessLines(lines: readonly string[], context: IncludeContext, macr
       for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex += 1) output.push(...preprocessLines(block, context, macros, constants));
       continue;
     }
-    if (parsed.kind === "code" && mnemonic === ".IF") { output.push(line); let nesting = 0; let foundEnd = false; for (i += 1; i < lines.length; i += 1) { const bodyLine = lines[i]!; const bodyParsed = parseLine(bodyLine, startLineNumber + i); const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase(); if (bodyParsed.kind === "code" && bodyMnemonic === ".IF") { nesting += 1; output.push(bodyLine); continue; } if (bodyParsed.kind === "code" && bodyMnemonic === ".ENDIF") { if (nesting === 0) { foundEnd = true; output.push(bodyLine); break; } nesting -= 1; output.push(bodyLine); continue; } if (nesting === 0 && bodyParsed.kind === "code" && (bodyMnemonic === ".ELSEIF" || bodyMnemonic === ".ELSE")) { output.push(bodyLine); continue; } output.push(bodyLine); } if (!foundEnd) throw new PreprocessError("E_IF_UNTERMINATED", "Unterminated .if block", parsed.lineNumber, parsed.raw); continue; }
+    if (parsed.kind === "code" && mnemonic === ".IF") {
+      output.push(line);
+      let nesting = 0;
+      let foundEnd = false;
+      for (i += 1; i < lines.length; i += 1) {
+        const bodyLine = lines[i]!;
+        const bodyParsed = parseLine(bodyLine, startLineNumber + i);
+        const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
+        if (bodyParsed.kind === "code" && bodyMnemonic === ".IF") {
+          nesting += 1;
+          output.push(bodyLine);
+          continue;
+        }
+        if (bodyParsed.kind === "code" && bodyMnemonic === ".ENDIF") {
+          if (nesting === 0) {
+            foundEnd = true;
+            output.push(bodyLine);
+            break;
+          }
+          nesting -= 1;
+          output.push(bodyLine);
+          continue;
+        }
+        if (nesting === 0 && bodyParsed.kind === "code" && (bodyMnemonic === ".ELSEIF" || bodyMnemonic === ".ELSE")) {
+          output.push(bodyLine);
+          continue;
+        }
+        // Expand macros inside .if blocks, not just pass them through
+        output.push(...expandLine(bodyLine, macros, 0));
+      }
+      if (!foundEnd) throw new PreprocessError("E_IF_UNTERMINATED", "Unterminated .if block", parsed.lineNumber, parsed.raw);
+      continue;
+    }
     if (parsed.kind === "code" && mnemonic === ".ENDREPEAT") throw new PreprocessError("E_REPEAT_UNEXPECTED_END", "Unexpected .endrepeat", parsed.lineNumber, parsed.raw);
     if (parsed.kind === "code" && (mnemonic === ".ELSE" || mnemonic === ".ELSEIF" || mnemonic === ".ENDIF")) throw new PreprocessError("E_IF_UNEXPECTED_END", `Unexpected ${mnemonic.toLowerCase()}`, parsed.lineNumber, parsed.raw);
     output.push(...expandLine(line, macros, 0));
