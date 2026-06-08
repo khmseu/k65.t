@@ -72,15 +72,21 @@ export function assemble(
     });
   } catch (error) {
     const filename = options.sourcePath ?? "<source>";
-    diagnostics.push({
-      code: "E_PREPROCESS",
-      level: "error",
-      message: error instanceof Error ? error.message : "Preprocessing failed",
-      location: {
-        filename,
-        lineNumber: 1,
-      },
-    });
+    if (error instanceof PreprocessError) {
+      diagnostics.push({
+        code: error.code,
+        level: "error",
+        message: error.message,
+        location: { filename, lineNumber: error.lineNumber, text: error.source },
+      });
+    } else {
+      diagnostics.push({
+        code: "E_PREPROCESS",
+        level: "error",
+        message: error instanceof Error ? error.message : "Preprocessing failed",
+        location: { filename, lineNumber: 1 },
+      });
+    }
     return {
       binary: new Uint8Array(),
       listing: [],
@@ -204,7 +210,8 @@ function collectDiagnostics(sourceText: string, passState: PassState, sourcePath
       continue;
     }
     const mnemonic = normalizeMnemonic(line.mnemonic);
-    const symbols = new Map(passState.symbols);
+    // Use per-line symbol snapshot for correct reassignable-label semantics
+    const symbols = new Map(passState.lineSymbols[lineIndex] ?? passState.symbols);
     const scope = passState.lineScopes[lineIndex];
     lineIndex += 1;
     if (line.label !== undefined && !isCheapLabel(line.label)) {
@@ -367,9 +374,14 @@ function emitBinary(sourceText: string, passState: PassState, sourcePath: string
   let line: SourceLine | null;
   let lineIndex = 0;
   while ((line = preprocessor.nextLine(passState.symbols)) !== null) {
-    if (line.kind !== "code") { listing.push({ address: null, bytes: [], source: line.raw, target: undefined }); continue; }
+    if (line.kind !== "code") {
+      listing.push({ address: null, bytes: [], source: line.raw, target: undefined });
+      lineIndex += 1;  // count non-code lines to stay in sync with lineSymbols/lineScopes
+      continue;
+    }
     const mnemonic = normalizeMnemonic(line.mnemonic);
-    const symbols = new Map(passState.symbols);
+    // Use per-line symbol snapshot for correct reassignable-label semantics
+    const symbols = new Map(passState.lineSymbols[lineIndex] ?? passState.symbols);
     const scope = passState.lineScopes[lineIndex];
     lineIndex += 1;
     if (line.label !== undefined && !isCheapLabel(line.label)) {
