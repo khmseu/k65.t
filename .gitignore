@@ -147,14 +147,7 @@ vite.config.ts.timestamp-*
 .vite/
 
 # Local stuff
-test/asrom.*
-test/BASIC-M6502.patch
-test/m6502_k65.*
-test/m6502.asm
-test/test_if_2.*
-test/test.*
 test/*.lst
 test/*.sym
 test/*.bin
 
-!test/m6502_k65.asm

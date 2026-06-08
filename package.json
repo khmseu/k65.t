@@ -1,24 +1,36 @@
 {
   "name": "k65t",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
-  "description": "K65.t assembler for 6502",
-  "main": "dist/index.js",
+  "description": "6502 multi-pass macro assembler written in TypeScript/Node.js.",
+  "keywords": [
+    "6502",
+    "assembler",
+    "macro",
+    "typescript",
+    "node"
+  ],
+  "license": "MIT",
+  "author": "Kai Henningsen <kai.extern@gmail.com>",
   "scripts": {
-    "build": "tsc",
-    "test": "node --enable-source-maps node_modules/tap/bin/tap.js test/**/*.test.ts",
-    "convert": "node --enable-source-maps dist/MACRO-10-Converter/convert.js test/M6502.asm test/m6502.converted.asm",
-    "converted": "node --enable-source-maps dist/Assembler/index.js test/m6502.converted.asm"
+    "analyze-logs": "node ./src/DEBUG_PREPROCESSOR/analyze_debug.js o",
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "convert": "node --enable-source-maps dist/MACRO-10-Converter/convert.js test/m6502.asm test/m6502.converted.asm",
+    "converted": "node --enable-source-maps dist/Assembler/index.js test/m6502.converted.asm",
+    "start": "node --enable-source-maps dist/Assembler/index.js",
+    "test": "node --enable-source-maps --test dist/**/*.test.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "engines": {
+    "node": ">=20"
+  },
   "devDependencies": {
-    "@types/node": "^20.10.0",
-    "@types/tap": "^18.0.4",
-    "eslint": "^9.0.0",
-    "prettier": "^3.1.1",
-    "tap": "^18.6.1",
-    "typescript": "^5.3.3"
+    "@types/node": "^25.9.2",
+    "@types/tap": "^18.0.0",
+    "eslint": "^10.4.1",
+    "prettier": "^3.8.3",
+    "tap": "^21.7.4",
+    "typescript": "^6.0.3"
   }
 }
