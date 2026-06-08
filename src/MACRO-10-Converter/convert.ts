@@ -29,13 +29,13 @@ export function convertMacro10ToK65(content: string): string {
     while (changed && iterations < 10) {
       let start = current;
       for (const arg of macroArgs) {
-        current = current.split(`<${arg}>`).join(`\\${arg}`);
-        const argRegex = new RegExp(`(?<!\\\\)\\b${arg}\\b`, "g");
-        current = current.replace(argRegex, `\\${arg}`);
+        current = current.split(`<${arg}>`).join(`\${arg}`);
+        const argRegex = new RegExp(`(?<!\\)\b${arg}\b`, "g");
+        current = current.replace(argRegex, `\${arg}`);
       }
       current = current.replace(/\^O([0-7]+)/g, "0o$1");
       current = current.replace(
-        /(^|[^A-Za-z0-9_.])\.(?=[^A-Za-z0-9_.]|$)/g,
+        /(^|[^A-Za-z0-9_.])\.(\=|[^A-Za-z0-9_.]|$)/g,
         "$1*",
       );
       current = current.replace(/%([A-Za-z0-9_]+)/g, "@$1");
@@ -66,9 +66,9 @@ export function convertMacro10ToK65(content: string): string {
       current = current.replace(/\bBLOCK\s+(.*)/, ".fill $1");
       current = current.replace(/^(\s*)EXP\s+(.*)/, "$1.word $2");
       current = current.replace(/^(\s*)SEARCH\s+(.*)/, '$1.include "$2.asm"');
-      current = current.replace(/([@A-Za-z0-9_\$]+)\s*==\s*(.*)/, "$1 = $2");
+      current = current.replace(/([\@A-Za-z0-9_\$]+)\s*==\s*(.*)/, "$1 = $2");
       current = current.replace(
-        /\bPRINTX\s*([^\sA-Za-z0-9])(.*?)\1/g,
+        /\bPRINTX\s*([^\sA-Za-z0-9])(.*)\1/g,
         '.print "$2"',
       );
       current = current.replace(/^\s*PRINTX\s+([^\/"\s>][^>]*)/, '.print "$1"');
@@ -79,6 +79,21 @@ export function convertMacro10ToK65(content: string): string {
       current = current.replace(/\bDC\s*\((.*)\)/g, ".textc $1");
       current = current.replace(/\bDT\s*\((.*)\)/g, ".text $1");
       current = current.replace(/\bADR\s*\((.*?)\)/g, ".word $1");
+      
+      // XWD 0o1000,number -> .byte <low byte of number>
+      // XWD is a PDP-10 "skip 2 words" macro; on 6502 we just emit the low byte
+      current = current.replace(/\bXWD\s+0o1000\s*,\s*(\d+)/g, (match, num) => {
+        const n = parseInt(num, 10);
+        return `.byte ${n & 0xFF}`;
+      });
+      current = current.replace(/\bXWD\s+0o1000\s*,\s*0o([0-7]+)/g, (match, octal) => {
+        const n = parseInt(octal, 8);
+        return `.byte ${n & 0xFF}`;
+      });
+      current = current.replace(/\bXWD\s+0o1000\s*,\s*\$([A-Fa-f0-9]+)/g, (match, hex) => {
+        const n = parseInt(hex, 16);
+        return `.byte ${n & 0xFF}`;
+      });
 
       changed = current !== start;
       iterations++;
@@ -93,7 +108,7 @@ export function convertMacro10ToK65(content: string): string {
     let current = text;
     // 1. Iteratively extract labels from the segment
     while (true) {
-      const labelMatch = current.match(/^(\s*)([@A-Za-z0-9_\$]+)::?(.*)/);
+      const labelMatch = current.match(/^(\s*)([\@A-Za-z0-9_\$]+)::?(.*)/);
       if (!labelMatch) break;
       const indent = labelMatch[1] ?? "";
       const labelName = labelMatch[2] ?? "";
@@ -109,7 +124,24 @@ export function convertMacro10ToK65(content: string): string {
     let final = performReplacements(current, macroArgs).trimEnd();
     if (!final && !text.includes(";")) return;
 
-    // 3. Standalone number or list of numbers -> .byte
+    // 3. Standalone string literal -> .byte (single char) or .text (multi-char)
+    const stringMatch = final.match(/^(\s*)"(.*?)"(\s*(?:;.*)?)$/);
+    if (stringMatch) {
+      const indent = stringMatch[1] ?? "";
+      const str = stringMatch[2] ?? "";
+      const comment = stringMatch[3] ?? "";
+      if (str.length === 1) {
+        // Single character: emit as .byte with ASCII code
+        const code = str.charCodeAt(0);
+        outLines.push(`${indent}.byte ${code}${comment}`);
+      } else {
+        // Multi-character: emit as .text
+        outLines.push(`${indent}.text "${str}"${comment}`);
+      }
+      return;
+    }
+
+    // 4. Standalone number or list of numbers -> .byte
     const numPart = "(?:0o[0-7]+|[0-9]+|\\$[A-Fa-f0-9]+)";
     const numRegex = new RegExp(
       `^(\\s*)(${numPart}(?:\\s*,\\s*${numPart})*)(\\s*(?:;.*)?)$`,
@@ -144,7 +176,7 @@ export function convertMacro10ToK65(content: string): string {
         lastBlock && lastBlock.type === "macro" ? lastBlock.args : [];
 
       // 1. Extract Labels (at start of line)
-      const labelMatch = line.match(/^(\s*)([@A-Za-z0-9_\$]+)::?(.*)/);
+      const labelMatch = line.match(/^(\s*)([\@A-Za-z0-9_\$]+)::?(.*)/);
       if (labelMatch) {
         finalizeAndPush(
           (labelMatch[1] ?? "") + (labelMatch[2] ?? "") + ":",
@@ -159,7 +191,7 @@ export function convertMacro10ToK65(content: string): string {
       let match;
       if (
         (match = line.match(
-          /^(\s*)DEFINE\s+([A-Za-z0-9_\$]+)(?:\s*\((.*?)\))?\s*,?\s*<(.*)/,
+          /^(\s*)DEFINE\s+([A-Za-z0-9_\$]+)(?:\s*\((.*)\))?\s*,?\s*<(.*)/,
         ))
       ) {
         const args = (match[3] ?? "")
@@ -191,13 +223,13 @@ export function convertMacro10ToK65(content: string): string {
         angleDepth++;
         line = (match[1] ?? "") + (match[4] ?? "");
         continue;
-      } else if ((match = line.match(/^(\s*)(IFE|IFN|IF1|IF2)\s*,?\s*<(.*)/))) {
+      } else if ((match = line.match(/^(\s*)(IFE|IFN|IF1|IF2)\s*,?\s*<(.*)/)))) {
         finalizeAndPush(`${match[1]}.if 1`, currentArgs);
         blockStack.push({ type: "if", args: [], startDepth: angleDepth });
         angleDepth++;
         line = (match[1] ?? "") + (match[3] ?? "");
         continue;
-      } else if ((match = line.match(/^(\s*)REPEAT\s+(.*?),?\s*<(.*)/))) {
+      } else if ((match = line.match(/^(\s*)REPEAT\s+(.*?),?\s*<(.*)/)))) {
         const count = performReplacements(match[2] ?? "", currentArgs);
         finalizeAndPush(`${match[1]}.repeat ${count}`, currentArgs);
         blockStack.push({ type: "repeat", args: [], startDepth: angleDepth });
@@ -223,7 +255,7 @@ export function convertMacro10ToK65(content: string): string {
           if (last && angleDepth === last.startDepth) {
             blockStack.pop();
             if (outLine.trim()) finalizeAndPush(outLine, currentArgs);
-            const indent = outLine.match(/^\s*/)?.[0] || "";
+            const indent = outLine.match(/^\s*/)? [0] || "";
             outLine = indent;
             const ender =
               last.type === "macro"
