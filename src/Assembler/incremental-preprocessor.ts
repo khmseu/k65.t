@@ -1,162 +1,97 @@
-import type {
-  MacroDefinition,
-  PreprocessorOptions,
-  SourceLine,
-  SourceLocation,
-  TaggedLine,
-} from "./types.js";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-
-import { evaluateExpressionDetailed } from "./expressions.js";
-import { parseLine, setKnownMacros } from "./parser.js";
+import { isAbsolute, join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
 
-const MAX_EXPANSION_DEPTH = 25;
-const MAX_INCLUDE_DEPTH = 32;
+import type { SourceLine } from "./types.js";
+import { parseLine } from "./parser.js";
+import { evaluateExpressionDetailed } from "./expressions.js";
 
-function debugLog(message: string): void {
-  if (process.env.DEBUG_PREPROCESSOR) {
-    console.error(`[PREPROC] ${message}`);
-  }
+let currentDir = process.cwd();
+
+export function setCurrentDir(dir: string): void {
+  currentDir = dir;
 }
 
-interface ConditionalFrame {
-  readonly type: "if";
-  readonly startLineNumber: number;
-  readonly startLocation: SourceLocation;
-  readonly branches: Array<{
-    condition: string | null;
-    isActive: boolean;
-  }>;
+interface TaggedLine {
+  content: string;
+  location: SourceLocation;
+  locationChain: SourceLocation[];
+}
+
+interface SourceLocation {
+  filename: string;
+  lineNumber: number;
+  text: string;
+  parent?: SourceLocation;
+}
+
+interface MacroFrame {
+  type: "macro";
+  name: string;
+  parameters: string[];
+  body: SourceLine[];
+}
+
+interface IfFrame {
+  type: "if";
+  branches: Array<{ condition: string; isActive: boolean }>;
   currentBranchIndex: number;
-  activeBranchIndex: number | null;
+  activeBranchIndex?: number;
 }
 
 interface RepeatFrame {
-  readonly type: "repeat";
-  readonly startLineNumber: number;
-  readonly startLocation: SourceLocation;
-  readonly count: number;
-  readonly body: readonly TaggedLine[];
+  type: "repeat";
+  startLineNumber: number;
+  startLocation: SourceLocation;
+  count: number;
+  body: TaggedLine[];
   currentIteration: number;
   lineIndex: number;
 }
 
-interface IncludeFrame {
-  readonly type: "include";
-  readonly filePath: string;
-  readonly preprocessor: IncrementalPreprocessor;
-}
-
-interface MacroExpansionFrame {
-  readonly type: "macro";
-  readonly macroName: string;
-  readonly body: readonly TaggedLine[];
-  lineIndex: number;
-}
-
-type DirectiveFrame =
-  | ConditionalFrame
-  | RepeatFrame
-  | IncludeFrame
-  | MacroExpansionFrame;
+type DirectiveFrame = MacroFrame | IfFrame | RepeatFrame;
 
 export class IncrementalPreprocessor {
-  private originalLines: readonly TaggedLine[];
-  private lines: TaggedLine[];
-  private lineIndex: number = 0;
-  private macros: Map<string, MacroDefinition> = new Map();
+  private lines: TaggedLine[] = [];
+  private lineIndex = 0;
+  private macros: Map<string, MacroFrame> = new Map();
   private directiveStack: DirectiveFrame[] = [];
-  private sourcePath: string | undefined;
-  private readFile: (path: string) => string;
-  private currentDir: string;
+  private readFile: (path: string) => string = readFileSync;
 
-  constructor(source: string, options: PreprocessorOptions = {}) {
-    this.sourcePath = options.sourcePath;
-    this.readFile =
-      options.readFile ?? ((path: string) => readFileSync(path, "utf8"));
-    this.currentDir = options.sourcePath
-      ? dirname(options.sourcePath)
-      : process.cwd();
-
-    const filename = options.sourcePath ?? "<source>";
-    const sourceLines = source.split(/\r?\n/);
-    this.originalLines = sourceLines.map((content, idx) => {
-      const loc = {
-        filename,
-        lineNumber: idx + 1,
-        text: content,
-      };
-      return {
-        content,
-        location: loc,
-        locationChain: [loc],
-      };
+  constructor(sourceText: string, readFile?: (path: string) => string) {
+    const lines = sourceText.split(/\r?\n/);
+    this.lines = lines.map((content, idx) => {
+      const loc = { filename: "<source>", lineNumber: idx + 1, text: content };
+      return { content, location: loc, locationChain: [loc] };
     });
-    this.lines = [...this.originalLines];
-
-    debugLog(`Initialized with ${this.lines.length} lines from ${filename}`);
+    if (readFile) this.readFile = readFile;
   }
 
   nextLine(symbols: ReadonlyMap<string, number>): SourceLine | null {
-    const tagged = this.nextTaggedLine(symbols);
-    if (!tagged) {
-      return null;
-    }
-
-    const parsed = parseLine(tagged.content, tagged.location.lineNumber);
-    return {
-      ...parsed,
-      location: tagged.location,
-      locationChain: tagged.locationChain,
-    };
-  }
-
-  private nextTaggedLine(
-    symbols: ReadonlyMap<string, number>,
-  ): TaggedLine | null {
     while (this.lineIndex < this.lines.length) {
-      const line = this.lines[this.lineIndex]!;
+      const tagged = this.lines[this.lineIndex]!;
       this.lineIndex += 1;
-
-      try {
-        const result = this.processTaggedLine(line, symbols);
-        if (result !== null) {
-          return result;
-        }
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Unknown error";
-        debugLog(
-          `ERROR at ${line.location.filename}:${line.location.lineNumber}: ${message}`,
-        );
-        return {
-          content: line.content,
-          location: line.location,
-          locationChain: [line.location],
-        };
+      const processed = this.processTaggedLine(tagged, symbols);
+      if (processed) {
+        return processed;
       }
     }
-
-    const repeatFrame = this.directiveStack.find((f) => f.type === "repeat") as
-      | RepeatFrame
-      | undefined;
-    if (repeatFrame && repeatFrame.currentIteration < repeatFrame.count - 1) {
-      repeatFrame.currentIteration += 1;
-      repeatFrame.lineIndex = 0;
-      return this.nextTaggedLine(symbols);
-    }
-
     return null;
   }
 
   private processTaggedLine(
     line: TaggedLine,
     symbols: ReadonlyMap<string, number>,
-  ): TaggedLine | null {
+  ): SourceLine | null {
     const trimmed = line.content.trim();
     if (!trimmed || /^\s*[;*]/.test(line.content)) {
-      return line;
+      return {
+        lineNumber: line.location.lineNumber,
+        raw: line.content,
+        kind: "blank",
+        operands: [],
+        locationChain: line.locationChain,
+        location: line.location,
+      };
     }
 
     const parsed = parseLine(line.content, line.location.lineNumber);
@@ -199,64 +134,73 @@ export class IncrementalPreprocessor {
         this.handleEndrepeatDirective(line.location);
         return null;
       }
-      const expanded = this.expandMacro(parsed, line, symbols);
-      if (expanded !== null) {
-        this.lines.splice(this.lineIndex, 0, ...expanded);
-        return null;
-      }
     }
+
+    // Check for macro invocation
+    const macroExpansion = this.expandMacro(parsed, line, symbols);
+    if (macroExpansion) {
+      this.lines.splice(this.lineIndex, 0, ...macroExpansion);
+      return null;
+    }
+
+    // Check for inactive conditional AFTER macro expansion
     if (this.isInInactiveConditional()) {
       return null;
     }
-    return line;
-  }
 
-  private handleMacroDefinition(line: SourceLine, location: SourceLocation): void {
-    const name = line.operands[0]?.toUpperCase();
-    if (!name) {
-      throw new Error(`Macro definition missing name at ${location.filename}:${location.lineNumber}`);
-    }
-    const parameters = line.operands.slice(1);
-    const body: TaggedLine[] = [];
-    while (this.lineIndex < this.lines.length) {
-      const bodyLine = this.lines[this.lineIndex]!;
-      this.lineIndex += 1;
-      const bodyParsed = parseLine(bodyLine.content, this.lineIndex);
-      if (bodyParsed.kind === "code" && bodyParsed.mnemonic?.toUpperCase() === ".ENDMACRO") break;
-      body.push(bodyLine);
-    }
-    this.macros.set(name, { name, parameters, body, lineNumber: location.lineNumber });
-    // Update the parser's known macros set so it recognizes macro names during parsing
-    setKnownMacros(new Set(this.macros.keys()));
+    return {
+      lineNumber: line.location.lineNumber,
+      raw: line.content,
+      kind: parsed.kind,
+      label: parsed.label,
+      mnemonic: parsed.mnemonic,
+      operands: parsed.operands,
+      comment: parsed.comment,
+      locationChain: line.locationChain,
+      location: line.location,
+    };
   }
 
   private handleIfDirective(condition: string, isActive: boolean, location: SourceLocation): void {
-    this.directiveStack.push({
+    const frame: IfFrame = {
       type: "if",
-      startLineNumber: location.lineNumber,
-      startLocation: location,
-      branches: [{ condition, isActive }],
+      branches: [
+        { condition, isActive },
+        { condition: "1", isActive: !isActive }, // else branch
+      ],
       currentBranchIndex: 0,
-      activeBranchIndex: isActive ? 0 : null,
-    });
+      activeBranchIndex: isActive ? 0 : undefined,
+    };
+    this.directiveStack.push(frame);
   }
 
   private handleElseifDirective(condition: string, symbols: ReadonlyMap<string, number>, location: SourceLocation): void {
     const frame = this.directiveStack[this.directiveStack.length - 1];
     if (!frame || frame.type !== "if") throw new Error(`.elseif without matching .if at ${location.filename}:${location.lineNumber}`);
-    const isActive = frame.activeBranchIndex === null && this.evaluateCondition(condition, symbols);
-    frame.branches.push({ condition, isActive });
-    frame.currentBranchIndex = frame.branches.length - 1;
-    if (isActive) frame.activeBranchIndex = frame.currentBranchIndex;
+    const isActive = this.evaluateCondition(condition, symbols);
+    const currentBranch = frame.branches[frame.currentBranchIndex];
+    if (currentBranch) {
+      currentBranch.condition = condition;
+      currentBranch.isActive = isActive;
+    }
+    if (frame.activeBranchIndex === undefined && isActive) {
+      frame.activeBranchIndex = frame.currentBranchIndex;
+    }
+    frame.currentBranchIndex += 1;
+    if (frame.branches.length <= frame.currentBranchIndex) {
+      frame.branches.push({ condition: "1", isActive: false });
+    }
   }
 
   private handleElseDirective(location: SourceLocation): void {
     const frame = this.directiveStack[this.directiveStack.length - 1];
     if (!frame || frame.type !== "if") throw new Error(`.else without matching .if at ${location.filename}:${location.lineNumber}`);
-    const isActive = frame.activeBranchIndex === null;
-    frame.branches.push({ condition: null, isActive });
-    frame.currentBranchIndex = frame.branches.length - 1;
-    if (isActive) frame.activeBranchIndex = frame.currentBranchIndex;
+    frame.currentBranchIndex += 1;
+    if (frame.branches.length <= frame.currentBranchIndex) {
+      const isActive = frame.activeBranchIndex === undefined;
+      frame.branches.push({ condition: "1", isActive });
+      if (isActive) frame.activeBranchIndex = frame.currentBranchIndex;
+    }
   }
 
   private handleEndifDirective(location: SourceLocation): void {
@@ -275,7 +219,7 @@ export class IncrementalPreprocessor {
     while (this.lineIndex < this.lines.length) {
       const bodyLine = this.lines[this.lineIndex]!;
       this.lineIndex += 1;
-      const bodyParsed = parseLine(bodyLine.content, this.lineIndex);
+      const bodyParsed = parseLine(bodyLine.content, bodyLine.location.lineNumber);
       if (bodyParsed.kind === "code") {
         const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
         if (bodyMnemonic === ".REPEAT") nesting += 1;
@@ -287,7 +231,9 @@ export class IncrementalPreprocessor {
       body.push(bodyLine);
     }
     this.directiveStack.push({ type: "repeat", startLineNumber: location.lineNumber, startLocation: location, count, body, currentIteration: 0, lineIndex: 0 });
-    this.lines.splice(this.lineIndex, 0, ...body);
+    // Splice the body BEFORE the .endrepeat line (which is at this.lineIndex - 1)
+    // This way, the body is at the correct position for the first iteration
+    this.lines.splice(this.lineIndex - 1, 0, ...body);
   }
 
   private handleEndrepeatDirective(location: SourceLocation): void {
@@ -295,7 +241,16 @@ export class IncrementalPreprocessor {
     if (!frame || frame.type !== "repeat") throw new Error(`.endrepeat without matching .repeat at ${location.filename}:${location.lineNumber}`);
     if (frame.currentIteration < frame.count - 1) {
       frame.currentIteration += 1;
-      this.lines.splice(this.lineIndex, 0, ...frame.body);
+      // Create new TaggedLine objects with updated line numbers for this iteration
+      // Each iteration should appear at a different position in the file
+      const bodyWithUpdatedLineNumbers = frame.body.map((line, idx) => ({
+        ...line,
+        location: {
+          ...line.location,
+          lineNumber: line.location.lineNumber + (frame.body.length * frame.currentIteration)
+        }
+      }));
+      this.lines.splice(this.lineIndex - 1, 0, ...bodyWithUpdatedLineNumbers);
     } else {
       this.directiveStack.pop();
     }
@@ -304,10 +259,10 @@ export class IncrementalPreprocessor {
   private handleIncludeDirective(line: SourceLine, location: SourceLocation): void {
     const pathOperand = line.operands[0];
     if (!pathOperand) throw new Error(`.include requires a file path at ${location.filename}:${location.lineNumber}`);
-    const pathMatch = pathOperand.match(/^["'](.+)["']$/);
+    const pathMatch = pathOperand.match(/^[\"'](.+)[\"']$/);
     if (!pathMatch) throw new Error(`.include path must be quoted at ${location.filename}:${location.lineNumber}`);
     const includePath = pathMatch[1]!;
-    const resolvedPath = isAbsolute(includePath) ? resolve(includePath) : resolve(join(this.currentDir, includePath));
+    const resolvedPath = isAbsolute(includePath) ? resolve(includePath) : resolve(join(currentDir, includePath));
     let includedText: string;
     try {
       includedText = this.readFile(resolvedPath);
@@ -348,18 +303,53 @@ export class IncrementalPreprocessor {
     const substitutions = new Map<string, string>();
     macro.parameters.forEach((param, index) => {
       substitutions.set(param, line.operands[index] ?? "");
-      substitutions.set(String(index + 1), line.operands[index] ?? "");
     });
-    const expanded: TaggedLine[] = macro.body.map((bodyLine) => {
-      let content = bodyLine.content;
-      for (const [param, value] of substitutions.entries()) content = content.replaceAll(`\\${param}`, value);
-      const loc = { filename: `<macro:${macro.name}>`, lineNumber: bodyLine.location.lineNumber, text: content, parent: taggedLine.location };
-      return { content, location: loc, locationChain: [loc, taggedLine.location, ...taggedLine.locationChain] };
-    });
-    if (line.label && expanded.length > 0) {
-      const firstLine = expanded[0]!;
-      expanded[0] = { ...firstLine, content: `${line.label} ${firstLine.content}` };
+    const expanded: TaggedLine[] = [];
+    for (const bodyLine of macro.body) {
+      let content = bodyLine.raw;
+      for (const [param, value] of substitutions) {
+        const regex = new RegExp(`\\b${param}\\b`, "g");
+        content = content.replace(regex, value);
+      }
+      const loc = { ...bodyLine.location, parent: taggedLine.location };
+      expanded.push({
+        content,
+        location: loc,
+        locationChain: [loc, ...taggedLine.locationChain],
+      });
     }
     return expanded;
+  }
+
+  private handleMacroDefinition(line: SourceLine, location: SourceLocation): void {
+    const name = line.mnemonic!.toUpperCase();
+    const parameters = line.operands;
+    const body: SourceLine[] = [];
+    let nesting = 0;
+    while (this.lineIndex < this.lines.length) {
+      const bodyLine = this.lines[this.lineIndex]!;
+      this.lineIndex += 1;
+      const bodyParsed = parseLine(bodyLine.content, bodyLine.location.lineNumber);
+      if (bodyParsed.kind === "code") {
+        const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
+        if (bodyMnemonic === ".MACRO") nesting += 1;
+        else if (bodyMnemonic === ".ENDMACRO") {
+          if (nesting === 0) break;
+          nesting -= 1;
+        }
+      }
+      body.push({
+        lineNumber: bodyLine.location.lineNumber,
+        raw: bodyLine.content,
+        kind: bodyParsed.kind,
+        label: bodyParsed.label,
+        mnemonic: bodyParsed.mnemonic,
+        operands: bodyParsed.operands,
+        comment: bodyParsed.comment,
+        locationChain: bodyLine.locationChain,
+        location: bodyLine.location,
+      });
+    }
+    this.macros.set(name, { type: "macro", name, parameters, body });
   }
 }
