@@ -30,7 +30,7 @@ export function convertMacro10ToK65(content: string): string {
       let start = current;
       for (const arg of macroArgs) {
         current = current.split(`<${arg}>`).join(`\${arg}`);
-        const argRegex = new RegExp(`(?<!\\)\b${arg}\b`, "g");
+        const argRegex = new RegExp(`(?<!\\\\)\\b${arg}\\b`, "g");
         current = current.replace(argRegex, `\${arg}`);
       }
       current = current.replace(/\^O([0-7]+)/g, "0o$1");
@@ -66,9 +66,9 @@ export function convertMacro10ToK65(content: string): string {
       current = current.replace(/\bBLOCK\s+(.*)/, ".fill $1");
       current = current.replace(/^(\s*)EXP\s+(.*)/, "$1.word $2");
       current = current.replace(/^(\s*)SEARCH\s+(.*)/, '$1.include "$2.asm"');
-      current = current.replace(/([\@A-Za-z0-9_\$]+)\s*==\s*(.*)/, "$1 = $2");
+      current = current.replace(/([\\@A-Za-z0-9_\$]+)\s*==\s*(.*)/, "$1 = $2");
       current = current.replace(
-        /\bPRINTX\s*([^\sA-Za-z0-9])(.*)\1/g,
+        /\bPRINTX\s*([^\sA-Za-z0-9])(.*)\\1/g,
         '.print "$2"',
       );
       current = current.replace(/^\s*PRINTX\s+([^\/"\s>][^>]*)/, '.print "$1"');
@@ -108,7 +108,7 @@ export function convertMacro10ToK65(content: string): string {
     let current = text;
     // 1. Iteratively extract labels from the segment
     while (true) {
-      const labelMatch = current.match(/^(\s*)([\@A-Za-z0-9_\$]+)::?(.*)/);
+      const labelMatch = current.match(/^(\s*)([\@A-Za-z0-9_\$]+)::?(.*)/);;
       if (!labelMatch) break;
       const indent = labelMatch[1] ?? "";
       const labelName = labelMatch[2] ?? "";
@@ -176,7 +176,7 @@ export function convertMacro10ToK65(content: string): string {
         lastBlock && lastBlock.type === "macro" ? lastBlock.args : [];
 
       // 1. Extract Labels (at start of line)
-      const labelMatch = line.match(/^(\s*)([\@A-Za-z0-9_\$]+)::?(.*)/);
+      const labelMatch = line.match(/^(\s*)([\@A-Za-z0-9_\$]+)::?(.*)/);;
       if (labelMatch) {
         finalizeAndPush(
           (labelMatch[1] ?? "") + (labelMatch[2] ?? "") + ":",
@@ -223,13 +223,13 @@ export function convertMacro10ToK65(content: string): string {
         angleDepth++;
         line = (match[1] ?? "") + (match[4] ?? "");
         continue;
-      } else if ((match = line.match(/^(\s*)(IFE|IFN|IF1|IF2)\s*,?\s*<(.*)/)))) {
+      } else if ((match = line.match(/^(\s*)(IFE|IFN|IF1|IF2)\s*,?\s*<(.*)/))){
         finalizeAndPush(`${match[1]}.if 1`, currentArgs);
         blockStack.push({ type: "if", args: [], startDepth: angleDepth });
         angleDepth++;
         line = (match[1] ?? "") + (match[3] ?? "");
         continue;
-      } else if ((match = line.match(/^(\s*)REPEAT\s+(.*?),?\s*<(.*)/)))) {
+      } else if ((match = line.match(/^(\s*)REPEAT\s+(.*?),?\s*<(.*)/))) {
         const count = performReplacements(match[2] ?? "", currentArgs);
         finalizeAndPush(`${match[1]}.repeat ${count}`, currentArgs);
         blockStack.push({ type: "repeat", args: [], startDepth: angleDepth });
@@ -255,7 +255,7 @@ export function convertMacro10ToK65(content: string): string {
           if (last && angleDepth === last.startDepth) {
             blockStack.pop();
             if (outLine.trim()) finalizeAndPush(outLine, currentArgs);
-            const indent = outLine.match(/^\s*/)? [0] || "";
+            const indent = outLine.match(/^\s*/)?.[0] || "";
             outLine = indent;
             const ender =
               last.type === "macro"
