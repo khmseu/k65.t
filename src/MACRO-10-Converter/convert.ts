@@ -3,6 +3,7 @@ import * as fs from "fs";
 import { URL } from "url";
 import { parse } from "path";
 
+
 /**
  * MACRO-10 symbol semantics:
  * - First 6 characters only (case-insensitive)
@@ -18,6 +19,8 @@ function normalizeSymbol(name: string): string {
   // Convert % prefix to @ (cheap label marker)
   let normalized = name.startsWith('%') ? '@' + name.slice(1) : name;
   // Replace invalid characters with underscores
+  // Note: We preserve full symbol names (no truncation) for clarity
+  // even though MACRO-10 only uses first 6 chars
   normalized = normalized.replace(/[^A-Za-z0-9.$@]/g, '_');
   return normalized;
 }
@@ -170,6 +173,13 @@ function normalizeSymbolsInLine(line: string): string {
     }
     
     if (ch === '"' || ch === "'" || ch === '/') {
+      // Flush any accumulated symbol before entering a string
+      if (current && /^[A-Za-z_%@]/.test(current[0]!)) {
+        result += normalizeSymbol(current);
+      } else {
+        result += current;
+      }
+      current = '';
       inString = true;
       stringChar = ch;
       result += ch;
@@ -177,7 +187,8 @@ function normalizeSymbolsInLine(line: string): string {
     }
     
     if (ch === ';') {
-      if (current) result += normalizeSymbol(current);
+      // In comments: don't normalize, preserve as-is
+      if (current) result += current;
       result += line.slice(i);
       break;
     }
@@ -185,13 +196,23 @@ function normalizeSymbolsInLine(line: string): string {
     if (/[A-Za-z0-9.$%@_]/.test(ch)) {
       current += ch;
     } else {
-      if (current) result += normalizeSymbol(current);
+      // Only normalize if it looks like a symbol (not empty, and valid)
+      if (current && /^[A-Za-z_%@]/.test(current[0]!)) {
+        result += normalizeSymbol(current);
+      } else {
+        result += current;
+      }
       result += ch;
       current = '';
     }
   }
   
-  if (current) result += normalizeSymbol(current);
+  // Final symbol
+  if (current && /^[A-Za-z_%@]/.test(current[0]!)) {
+    result += normalizeSymbol(current);
+  } else {
+    result += current;
+  }
   return result;
 }
 
@@ -208,16 +229,8 @@ export function convertMacro10ToK65(content: string): string {
     return normalizeSymbolsInLine(uppercaseNonComment(line));
   });
   
-  // Pass 2: Collect symbols and generate aliases
-  const symbolMap = collectSymbols(uppercasedLines);
-  const collisions = createSymbolAliases(symbolMap);
-  const aliasDirectives = generateAliasDirectives(collisions);
-  
-  // Rejoin with aliases at the top
-  const contentWithAliases: string = (aliasDirectives.length > 0 ? aliasDirectives.join('\n') + '\n\n' : '') + 
-                             uppercasedLines.join('\n');
-  
-  lines = contentWithAliases.split(/\r?\n/);
+  // Pass 2: No alias generation - use full symbol names for clarity
+  lines = uppercasedLines;
   const outLines: string[] = [];
 
   interface Block {
@@ -239,9 +252,9 @@ export function convertMacro10ToK65(content: string): string {
     while (changed && iterations < 10) {
       let start = current;
       for (const arg of macroArgs) {
-        current = current.split(`<${arg}>`).join(`${arg}`);
+        current = current.split(`<${arg}>`).join(`\${arg}`);
         const argRegex = new RegExp(`(?<!\\\\)\\b${arg}\\b`, "g");
-        current = current.replace(argRegex, `${arg}`);
+        current = current.replace(argRegex, `\${arg}`);
       }
       current = current.replace(/\^O([0-7]+)/g, "0o$1");
       current = current.replace(
@@ -407,7 +420,7 @@ export function convertMacro10ToK65(content: string): string {
         const args = (match[3] ?? "")
           .split(",")
           .map((s: string) => s.trim())
-          .filter((s: string) => s);
+          .filter((s) => s);
         finalizeAndPush(
           `${match[1]}.macro ${match[2]}${args.length > 0 ? ", " + args.join(", ") : ""}`,
           currentArgs,
@@ -433,7 +446,7 @@ export function convertMacro10ToK65(content: string): string {
         angleDepth++;
         line = (match[1] ?? "") + (match[4] ?? "");
         continue;
-      } else if ((match = line.match(/^(\s*)(IFE|IFN|IF1|IF2)\s*,?\s*<(.*)/))){
+      } else if ((match = line.match(/^(\s*)(IFE|IFN|IF1|IF2)\s*,?\s*<(.*)/))) {
         finalizeAndPush(`${match[1]}.if 1`, currentArgs);
         blockStack.push({ type: "if", args: [], startDepth: angleDepth });
         angleDepth++;
