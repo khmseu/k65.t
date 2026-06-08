@@ -4,10 +4,220 @@ import { URL } from "url";
 import { parse } from "path";
 
 /**
+ * MACRO-10 symbol semantics:
+ * - First 6 characters only (case-insensitive)
+ * - Valid chars: letters, numerals, . $ %
+ * - % prefix = cheap label (convert to @)
+ */
+
+function isValidSymbolChar(ch: string): boolean {
+  return /[A-Za-z0-9.$%]/.test(ch);
+}
+
+function normalizeSymbol(name: string): string {
+  // Convert % prefix to @ (cheap label marker)
+  let normalized = name.startsWith('%') ? '@' + name.slice(1) : name;
+  // Replace invalid characters with underscores
+  normalized = normalized.replace(/[^A-Za-z0-9.$@]/g, '_');
+  return normalized;
+}
+
+interface CollisionGroup {
+  canonical6: string;
+  canonical: string;
+  variants: string[];
+}
+
+function collectSymbols(lines: readonly string[]): Map<string, Set<string>> {
+  const symbolMap = new Map<string, Set<string>>();
+  const keywords = new Set([
+    'DEFINE', 'ENDM', 'MACRO', 'IFE', 'IFN', 'IF1', 'IF2', 'ELSE', 'ENDIF',
+    'REPEAT', 'ENDREPEAT', 'TITLE', 'SUBTTL', 'PAGE', 'ORG', 'BLOCK', 'EXP',
+    'SEARCH', 'PRINTX', 'DC', 'DT', 'ADR', 'XWD', 'COMMENT', 'SALL', 'RADIX',
+    'LDA', 'LDX', 'LDY', 'STA', 'STX', 'STY', 'ADC', 'SBC', 'CMP', 'CPX', 'CPY',
+    'AND', 'ORA', 'EOR', 'ASL', 'LSR', 'ROL', 'ROR', 'BIT', 'BEQ', 'BNE', 'BCC',
+    'BCS', 'BMI', 'BPL', 'BVC', 'BVS', 'JMP', 'JSR', 'RTS', 'RTI', 'BRK', 'NOP',
+    'CLC', 'SEC', 'CLD', 'SED', 'CLI', 'SEI', 'CLV', 'TAX', 'TXA', 'TAY', 'TYA',
+    'TSX', 'TXS', 'PHA', 'PLA', 'PHP', 'PLP', 'A', 'X', 'Y', 'S', 'P'
+  ]);
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(';') || trimmed.startsWith('*')) continue;
+
+    // Extract symbols from the line
+    let inString = false;
+    let stringChar = '';
+    let current = '';
+    
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i]!;
+      
+      if (inString) {
+        if (ch === stringChar && line[i - 1] !== '\\') inString = false;
+        continue;
+      }
+      
+      if (ch === '"' || ch === "'" || ch === '/') {
+        inString = true;
+        stringChar = ch;
+        continue;
+      }
+      
+      if (ch === ';') break; // Rest is comment
+      
+      if (/[A-Za-z_%@]/.test(ch)) {
+        current += ch;
+      } else {
+        if (current && !keywords.has(current.toUpperCase())) {
+          const normalized = normalizeSymbol(current);
+          const key6 = normalized.slice(0, 6).toUpperCase();
+          if (!symbolMap.has(key6)) symbolMap.set(key6, new Set());
+          symbolMap.get(key6)!.add(normalized);
+        }
+        current = '';
+      }
+    }
+    
+    if (current && !keywords.has(current.toUpperCase())) {
+      const normalized = normalizeSymbol(current);
+      const key6 = normalized.slice(0, 6).toUpperCase();
+      if (!symbolMap.has(key6)) symbolMap.set(key6, new Set());
+      symbolMap.get(key6)!.add(normalized);
+    }
+  }
+  
+  return symbolMap;
+}
+
+function createSymbolAliases(symbolMap: Map<string, Set<string>>): CollisionGroup[] {
+  const groups: CollisionGroup[] = [];
+  
+  for (const [key6, variants] of symbolMap) {
+    if (variants.size <= 1) continue; // No collision
+    
+    // Select longest variant as canonical
+    const variantArray = Array.from(variants).sort((a, b) => b.length - a.length);
+    const canonical = variantArray[0]!;
+    
+    groups.push({
+      canonical6: key6,
+      canonical,
+      variants: variantArray.slice(1)
+    });
+  }
+  
+  return groups.sort((a, b) => a.canonical.localeCompare(b.canonical));
+}
+
+function generateAliasDirectives(groups: CollisionGroup[]): string[] {
+  const directives: string[] = [];
+  
+  for (const group of groups) {
+    for (const variant of group.variants) {
+      directives.push(`${variant}=${group.canonical} ; Alias for ${group.canonical}`);
+    }
+  }
+  
+  return directives;
+}
+
+function uppercaseNonComment(line: string): string {
+  let result = '';
+  let inString = false;
+  let stringChar = '';
+  
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    
+    if (inString) {
+      result += ch;
+      if (ch === stringChar && line[i - 1] !== '\\') inString = false;
+      continue;
+    }
+    
+    if (ch === '"' || ch === "'" || ch === '/') {
+      inString = true;
+      stringChar = ch;
+      result += ch;
+      continue;
+    }
+    
+    if (ch === ';') {
+      result += line.slice(i); // Rest is comment
+      break;
+    }
+    
+    result += ch.toUpperCase();
+  }
+  
+  return result;
+}
+
+function normalizeSymbolsInLine(line: string): string {
+  let result = '';
+  let inString = false;
+  let stringChar = '';
+  let current = '';
+  
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    
+    if (inString) {
+      result += ch;
+      if (ch === stringChar && line[i - 1] !== '\\') inString = false;
+      continue;
+    }
+    
+    if (ch === '"' || ch === "'" || ch === '/') {
+      inString = true;
+      stringChar = ch;
+      result += ch;
+      continue;
+    }
+    
+    if (ch === ';') {
+      if (current) result += normalizeSymbol(current);
+      result += line.slice(i);
+      break;
+    }
+    
+    if (/[A-Za-z0-9.$%@_]/.test(ch)) {
+      current += ch;
+    } else {
+      if (current) result += normalizeSymbol(current);
+      result += ch;
+      current = '';
+    }
+  }
+  
+  if (current) result += normalizeSymbol(current);
+  return result;
+}
+
+/**
  * Converts MACRO-10 assembler format to k65.t format.
  */
 export function convertMacro10ToK65(content: string): string {
-  const lines = content.split(/\r?\n/);
+  // Two-pass approach: normalize symbols and uppercase non-comments
+  let lines: string[] = content.split(/\r?\n/);
+  
+  // Pass 1: Uppercase and normalize
+  const uppercasedLines: string[] = lines.map((line: string) => {
+    if (line.trim().startsWith(';') || line.trim().startsWith('*')) return line;
+    return normalizeSymbolsInLine(uppercaseNonComment(line));
+  });
+  
+  // Pass 2: Collect symbols and generate aliases
+  const symbolMap = collectSymbols(uppercasedLines);
+  const collisions = createSymbolAliases(symbolMap);
+  const aliasDirectives = generateAliasDirectives(collisions);
+  
+  // Rejoin with aliases at the top
+  const contentWithAliases: string = (aliasDirectives.length > 0 ? aliasDirectives.join('\n') + '\n\n' : '') + 
+                             uppercasedLines.join('\n');
+  
+  lines = contentWithAliases.split(/\r?\n/);
   const outLines: string[] = [];
 
   interface Block {
@@ -29,9 +239,9 @@ export function convertMacro10ToK65(content: string): string {
     while (changed && iterations < 10) {
       let start = current;
       for (const arg of macroArgs) {
-        current = current.split(`<${arg}>`).join(`\${arg}`);
+        current = current.split(`<${arg}>`).join(`${arg}`);
         const argRegex = new RegExp(`(?<!\\\\)\\b${arg}\\b`, "g");
-        current = current.replace(argRegex, `\${arg}`);
+        current = current.replace(argRegex, `${arg}`);
       }
       current = current.replace(/\^O([0-7]+)/g, "0o$1");
       current = current.replace(
@@ -196,8 +406,8 @@ export function convertMacro10ToK65(content: string): string {
       ) {
         const args = (match[3] ?? "")
           .split(",")
-          .map((s) => s.trim())
-          .filter((s) => s);
+          .map((s: string) => s.trim())
+          .filter((s: string) => s);
         finalizeAndPush(
           `${match[1]}.macro ${match[2]}${args.length > 0 ? ", " + args.join(", ") : ""}`,
           currentArgs,
