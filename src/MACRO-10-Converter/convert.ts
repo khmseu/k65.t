@@ -302,8 +302,8 @@ export function convertMacro10ToK65(content: string): string {
       // Directives with optional spaces
       current = current.replace(/\bDC\s*"(.*?)"/g, '.textc "$1"');
       current = current.replace(/\bDT\s*"(.*?)"/g, '.text "$1"');
-      current = current.replace(/\bDC\s*\((.*)\)/g, ".textc $1");
-      current = current.replace(/\bDT\s*\((.*)\)/g, ".text $1");
+      current = current.replace(/\bDC\s*\((.*)\)/g, '.textc "$1"');
+      current = current.replace(/\bDT\s*\((.*)\)/g, '.text "$1"');
       current = current.replace(/\bADR\s*\((.*?)\)/g, ".word $1");
       
       // XWD 0o1000,number -> .byte <low byte of number>
