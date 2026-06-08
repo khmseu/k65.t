@@ -208,6 +208,8 @@ function splitComment(raw: string): [string, string | undefined] {
  * This preserves expression tokens like $8000, #$01, (base+3)*2 intact.
  * A string literal immediately following a non-space token is treated as
  * a separate token (e.g. DCI"END" -> ["DCI", '"END"']).
+ * After closing a quoted string, if next char is non-whitespace/non-paren,
+ * split the string off from what follows.
  */
 function splitTopLevelWhitespace(text: string): string[] {
   const out: string[] = [];
@@ -221,7 +223,18 @@ function splitTopLevelWhitespace(text: string): string[] {
       cur += ch;
       if (escaped) { escaped = false; continue; }
       if (ch === "\\") { escaped = true; continue; }
-      if (ch === quote) quote = undefined;
+      if (ch === quote) {
+        quote = undefined;
+        // After closing a string, if next char is non-whitespace and non-paren,
+        // split the string off from what follows
+        if (i + 1 < text.length) {
+          const nextCh = text[i + 1]!;
+          if (!/\s|[().]/.test(nextCh)) {
+            out.push(cur);
+            cur = "";
+          }
+        }
+      }
       continue;
     }
     if (ch === '"' || ch === "'") {
