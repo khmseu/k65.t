@@ -330,7 +330,7 @@ export function convertMacro10ToK65(content: string): string {
   /**
    * Finalizes a segment of code, extracting labels and applying the .byte rule.
    */
-  function finalizeAndPush(text: string, macroArgs: string[]) {
+  function finalizeAndPush(text: string, macroArgs: string[], sourceLineNumber?: number) {
     let current = text;
     // 1. Iteratively extract labels from the segment
     while (true) {
@@ -339,9 +339,12 @@ export function convertMacro10ToK65(content: string): string {
       const indent = labelMatch[1] ?? "";
       const labelName = labelMatch[2] ?? "";
       const rest = labelMatch[3] ?? "";
-      outLines.push(
-        performReplacements(indent + labelName + ":", macroArgs).trimEnd(),
-      );
+      const labelLine = performReplacements(indent + labelName + ":", macroArgs).trimEnd();
+      if (sourceLineNumber) {
+        outLines.push(`${labelLine}  ; @source ${sourceLineNumber}`);
+      } else {
+        outLines.push(labelLine);
+      }
       current = indent + rest;
       if (!current.trim()) return;
     }
@@ -375,10 +378,18 @@ export function convertMacro10ToK65(content: string): string {
     if (numRegex.test(final)) {
       final = final.replace(numRegex, "$1.byte $2$3");
     }
-    outLines.push(final);
+    // Add source location comment if we have a source line number
+    if (sourceLineNumber && final.trim() && !final.trim().startsWith(';') && !final.trim().startsWith('*')) {
+      outLines.push(`${final}  ; @source ${sourceLineNumber}`);
+    } else {
+      outLines.push(final);
+    }
   }
 
-  for (let line of lines) {
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    let line = lines[lineIdx]!;
+    const sourceLineNumber = lineIdx + 1; // 1-based line number
+    
     if (!line.trim() && !inBlockComment) {
       outLines.push("");
       continue;
@@ -409,6 +420,7 @@ export function convertMacro10ToK65(content: string): string {
         finalizeAndPush(
           (labelMatch[1] ?? "") + (labelMatch[2] ?? "") + ":",
           currentArgs,
+          sourceLineNumber,
         );
         line = (labelMatch[1] ?? "") + (labelMatch[3] ?? "");
         if (!line.trim()) break;
@@ -429,6 +441,7 @@ export function convertMacro10ToK65(content: string): string {
         finalizeAndPush(
           `${match[1]}.macro ${match[2]}${args.length > 0 ? ", " + args.join(", ") : ""}`,
           currentArgs,
+          sourceLineNumber,
         );
         blockStack.push({ type: "macro", args, startDepth: angleDepth });
         angleDepth++;
@@ -446,20 +459,20 @@ export function convertMacro10ToK65(content: string): string {
               ? `${minus[1]} == ${minus[2]}`
               : `${minus[1]} != ${minus[2]}`;
         if (match[2] === "IF1" || match[2] === "IF2") outCond = "1";
-        finalizeAndPush(`${match[1]}.if ${outCond}`, currentArgs);
+        finalizeAndPush(`${match[1]}.if ${outCond}`, currentArgs, sourceLineNumber);
         blockStack.push({ type: "if", args: [], startDepth: angleDepth });
         angleDepth++;
         line = (match[1] ?? "") + (match[4] ?? "");
         continue;
       } else if ((match = line.match(/^(\s*)(IFE|IFN|IF1|IF2)\s*,?\s*<(.*)/))) {
-        finalizeAndPush(`${match[1]}.if 1`, currentArgs);
+        finalizeAndPush(`${match[1]}.if 1`, currentArgs, sourceLineNumber);
         blockStack.push({ type: "if", args: [], startDepth: angleDepth });
         angleDepth++;
         line = (match[1] ?? "") + (match[3] ?? "");
         continue;
       } else if ((match = line.match(/^(\s*)REPEAT\s+(.*?),?\s*<(.*)/))) {
         const count = performReplacements(match[2] ?? "", currentArgs);
-        finalizeAndPush(`${match[1]}.repeat ${count}`, currentArgs);
+        finalizeAndPush(`${match[1]}.repeat ${count}`, currentArgs, sourceLineNumber);
         blockStack.push({ type: "repeat", args: [], startDepth: angleDepth });
         angleDepth++;
         line = (match[1] ?? "") + (match[3] ?? "");
@@ -482,7 +495,7 @@ export function convertMacro10ToK65(content: string): string {
           const last = blockStack[blockStack.length - 1];
           if (last && angleDepth === last.startDepth) {
             blockStack.pop();
-            if (outLine.trim()) finalizeAndPush(outLine, currentArgs);
+            if (outLine.trim()) finalizeAndPush(outLine, currentArgs, sourceLineNumber);
             const indent = outLine.match(/^\s*/)?.[0] || "";
             outLine = indent;
             const ender =
@@ -491,7 +504,7 @@ export function convertMacro10ToK65(content: string): string {
                 : last.type === "if"
                   ? ".endif"
                   : ".endrepeat";
-            finalizeAndPush(indent + ender, currentArgs);
+            finalizeAndPush(indent + ender, currentArgs, sourceLineNumber);
           } else {
             outLine += ")";
           }
@@ -504,7 +517,7 @@ export function convertMacro10ToK65(content: string): string {
       if (outLine.trim() || outLine.includes(";")) {
         if (/^\s*(SALL|RADIX)/.test(outLine))
           outLines.push(";" + outLine.trimEnd());
-        else finalizeAndPush(outLine, currentArgs);
+        else finalizeAndPush(outLine, currentArgs, sourceLineNumber);
       }
       processing = false;
     }
