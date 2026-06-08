@@ -19,9 +19,12 @@ function normalizeSymbol(name: string): string {
   // Convert % prefix to @ (cheap label marker)
   let normalized = name.startsWith('%') ? '@' + name.slice(1) : name;
   // Replace invalid characters with underscores
-  // Note: We preserve full symbol names (no truncation) for clarity
-  // even though MACRO-10 only uses first 6 chars
   normalized = normalized.replace(/[^A-Za-z0-9.$@]/g, '_');
+  // TRUNCATE TO 6 CHARACTERS (MACRO-10 semantics)
+  // This is critical: MACRO-10 only recognizes first 6 chars of symbols
+  if (normalized.length > 6) {
+    normalized = normalized.slice(0, 6);
+  }
   return normalized;
 }
 
@@ -229,7 +232,7 @@ export function convertMacro10ToK65(content: string): string {
     return normalizeSymbolsInLine(uppercaseNonComment(line));
   });
   
-  // Pass 2: No alias generation - use full symbol names for clarity
+  // Pass 2: No alias generation - symbols are truncated to 6 chars
   lines = uppercasedLines;
   const outLines: string[] = [];
 
