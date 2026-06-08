@@ -10,7 +10,7 @@ const MAX_INCLUDE_DEPTH = 32;
  * Preprocessor: Handles ONLY structural composition before the incremental pass.
  *
  * Responsibilities:
- * - .INCLUDE: recursive file inclusion
+ * - .INCLUDE: recursive file inclusion with proper source location tracking
  * - .MACRO collection: registers macro names with the parser (via setKnownMacros)
  *   and passes the definition blocks THROUGH unchanged so the incremental
  *   preprocessor can collect the bodies with full symbol-table access.
@@ -31,6 +31,16 @@ export interface PreprocessOptions {
   readonly readFile?: (filePath: string) => string;
 }
 
+export interface TaggedLine {
+  content: string;
+  location: SourceLocation;
+}
+
+export interface SourceLocation {
+  filename: string;
+  lineNumber: number;
+}
+
 export class PreprocessError extends Error {
   readonly code: string;
   readonly lineNumber: number;
@@ -45,15 +55,22 @@ export class PreprocessError extends Error {
   }
 }
 
-export function preprocessSource(text: string, options: PreprocessOptions = {}): string {
+/**
+ * Preprocess source code and return tagged lines with source locations.
+ * Each line carries information about which file it came from and its line number within that file.
+ */
+export function preprocessSourceToTaggedLines(text: string, options: PreprocessOptions = {}): TaggedLine[] {
   const sourcePath = options.sourcePath;
   const currentDir = options.currentDir ?? (sourcePath === undefined ? process.cwd() : dirname(sourcePath));
   const readFile = options.readFile ?? ((filePath: string) => readFileSync(filePath, "utf8"));
   const macros = new Set<string>();
   // Collect numeric constants for .repeat count evaluation only
   const constants = collectConstants(text.split(/\r?\n/));
-  const output = preprocessLines(
-    text.split(/\r?\n/),
+  const output = preprocessLinesToTagged(
+    text.split(/\r?\n/).map((content, idx) => ({
+      content,
+      location: { filename: sourcePath ?? "<source>", lineNumber: idx + 1 },
+    })),
     {
       currentDir,
       ...(sourcePath !== undefined ? { sourcePath } : {}),
@@ -64,7 +81,16 @@ export function preprocessSource(text: string, options: PreprocessOptions = {}):
     macros,
     constants,
   );
-  return output.join("\n");
+  return output;
+}
+
+/**
+ * Legacy function that returns preprocessed source as a string.
+ * Used for backward compatibility.
+ */
+export function preprocessSource(text: string, options: PreprocessOptions = {}): string {
+  const tagged = preprocessSourceToTaggedLines(text, options);
+  return tagged.map(line => line.content).join("\n");
 }
 
 interface IncludeContext {
@@ -118,22 +144,22 @@ function collectConstants(lines: readonly string[]): Map<string, number> {
   return constants;
 }
 
-function preprocessLines(
-  lines: readonly string[],
+function preprocessLinesToTagged(
+  lines: readonly TaggedLine[],
   context: IncludeContext,
   macros: Set<string>,
   constants: Map<string, number> = new Map(),
-  startLineNumber: number = 1,
-): string[] {
-  const output: string[] = [];
+): TaggedLine[] {
+  const output: TaggedLine[] = [];
 
   for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]!;
-    const lineNumber = startLineNumber + i;
+    const taggedLine = lines[i]!;
+    const line = taggedLine.content;
+    const lineNumber = taggedLine.location.lineNumber;
     const parsed = parseLine(line, lineNumber);
     const mnemonic = parsed.mnemonic?.toUpperCase();
 
-    // .INCLUDE: expand file contents inline
+    // .INCLUDE: expand file contents inline, but preserve source locations
     if (parsed.kind === "code" && mnemonic === ".INCLUDE") {
       const includeOperand = parsed.operands[0];
       if (includeOperand === undefined) {
@@ -156,8 +182,11 @@ function preprocessLines(
       } catch {
         throw new PreprocessError("E_INCLUDE_READ", `Unable to read include file: ${resolvedPath}`, parsed.lineNumber, parsed.raw);
       }
-      const includedLines = preprocessLines(
-        includedText.split(/\r?\n/),
+      const includedLines = preprocessLinesToTagged(
+        includedText.split(/\r?\n/).map((content, idx) => ({
+          content,
+          location: { filename: resolvedPath, lineNumber: idx + 1 },
+        })),
         {
           currentDir: dirname(resolvedPath),
           sourcePath: resolvedPath,
@@ -183,13 +212,13 @@ function preprocessLines(
         setKnownMacros(new Set(macros));
       }
       // Pass .MACRO line through
-      output.push(line);
+      output.push(taggedLine);
       // Pass body lines through until .ENDMACRO (with unterminated check)
       let foundEnd = false;
       for (i += 1; i < lines.length; i += 1) {
-        const bodyLine = lines[i]!;
-        output.push(bodyLine);
-        const bodyParsed = parseLine(bodyLine, startLineNumber + i);
+        const bodyTaggedLine = lines[i]!;
+        output.push(bodyTaggedLine);
+        const bodyParsed = parseLine(bodyTaggedLine.content, bodyTaggedLine.location.lineNumber);
         if (bodyParsed.kind === "code" && bodyParsed.mnemonic?.toUpperCase() === ".ENDMACRO") {
           foundEnd = true;
           break;
@@ -224,19 +253,19 @@ function preprocessLines(
       if (repeatCount < 0) {
         throw new PreprocessError("E_REPEAT_RANGE", ".repeat count must be non-negative", parsed.lineNumber, parsed.raw);
       }
-      const block: string[] = [];
+      const block: TaggedLine[] = [];
       let foundEnd = false;
       let nesting = 0;
       for (i += 1; i < lines.length; i += 1) {
-        const bodyLine = lines[i]!;
-        const bodyParsed = parseLine(bodyLine, startLineNumber + i);
+        const bodyTaggedLine = lines[i]!;
+        const bodyParsed = parseLine(bodyTaggedLine.content, bodyTaggedLine.location.lineNumber);
         const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
         if (bodyParsed.kind === "code" && bodyMnemonic === ".REPEAT") nesting += 1;
         if (bodyParsed.kind === "code" && bodyMnemonic === ".ENDREPEAT") {
           if (nesting === 0) { foundEnd = true; break; }
           nesting -= 1;
         }
-        block.push(bodyLine);
+        block.push(bodyTaggedLine);
       }
       if (!foundEnd) {
         throw new PreprocessError("E_REPEAT_UNTERMINATED", "Unterminated .repeat block", parsed.lineNumber, parsed.raw);
@@ -244,7 +273,7 @@ function preprocessLines(
       // Emit body lines N times -- WITHOUT expanding macros (that is the
       // incremental preprocessor's job)
       for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex += 1) {
-        output.push(...preprocessLines(block, context, macros, constants));
+        output.push(...preprocessLinesToTagged(block, context, macros, constants));
       }
       continue;
     }
@@ -258,13 +287,13 @@ function preprocessLines(
     // evaluates conditions with the live symbol table).
     // We must track nesting to find the matching .ENDIF and check for unterminated blocks.
     if (parsed.kind === "code" && mnemonic === ".IF") {
-      output.push(line);
+      output.push(taggedLine);
       let nesting = 0;
       let foundEnd = false;
       for (i += 1; i < lines.length; i += 1) {
-        const bodyLine = lines[i]!;
-        output.push(bodyLine);
-        const bodyParsed = parseLine(bodyLine, startLineNumber + i);
+        const bodyTaggedLine = lines[i]!;
+        output.push(bodyTaggedLine);
+        const bodyParsed = parseLine(bodyTaggedLine.content, bodyTaggedLine.location.lineNumber);
         const bodyMnemonic = bodyParsed.kind === "code" ? bodyParsed.mnemonic?.toUpperCase() : undefined;
         if (bodyMnemonic === ".IF") {
           nesting += 1;
@@ -286,7 +315,7 @@ function preprocessLines(
 
     // Everything else (regular instructions, directives, macro invocations):
     // pass through unchanged for the incremental preprocessor to handle.
-    output.push(line);
+    output.push(taggedLine);
   }
 
   return output;
