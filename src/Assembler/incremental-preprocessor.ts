@@ -1,18 +1,9 @@
-import { parseLine, setKnownMacros } from "./parser.js";
+import { parseLine } from "./parser.js";
 import { evaluateExpressionDetailed } from "./expressions.js";
 import type { TaggedLine, SourceLocation } from "./preprocessor.js";
 import { preprocessSourceToTaggedLines } from "./preprocessor.js";
-
-export interface SourceLine {
-  kind: "code" | "comment" | "blank";
-  raw: string;
-  label?: string;
-  mnemonic?: string;
-  operands: string[];
-  lineNumber: number;
-  location: SourceLocation;
-  locationChain: SourceLocation[];
-}
+import type { SourceLine } from "./types.js";
+import { setKnownMacros } from "./parser.js";
 
 const debugLog = (msg: string) => {
   if (process.env.DEBUG_PREPROCESSOR) {
@@ -86,7 +77,6 @@ export class IncrementalPreprocessor {
     return {
       ...parsed,
       location: tagged.location,
-      locationChain: [tagged.location],
     };
   }
 
