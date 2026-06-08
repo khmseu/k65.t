@@ -383,10 +383,12 @@ export function convertMacro10ToK65(content: string): string {
       outLines.push("");
       continue;
     }
-    if (!inBlockComment && line.includes("COMMENT *")) {
+    if (!inBlockComment && line.includes("COMMEN")) {
+      // COMMENT * becomes COMMEN * after truncation to 6 chars
       inBlockComment = true;
-      outLines.push(line.replace("COMMENT *", "*").trimEnd());
-      if (line.split("COMMENT *")[1]?.includes("*")) inBlockComment = false;
+      outLines.push(line.replace(/COMMEN\s*\*/, "*").trimEnd());
+      const afterCommen = line.split(/COMMEN\s*\*/)[1];
+      if (afterCommen?.includes("*")) inBlockComment = false;
       continue;
     }
     if (inBlockComment) {
