@@ -1,253 +1,329 @@
-import * as fs from "fs";
-import { URL } from "url";
-import { parse } from "path";
+import { parseLine, setKnownMacros } from "./parser.js";
+import { evaluateExpressionDetailed } from "./expressions.js";
+import type { TaggedLine, SourceLocation } from "./preprocessor.js";
+import { preprocessSourceToTaggedLines } from "./preprocessor.js";
 
-export interface TaggedLine {
-  content: string;
-  location: SourceLocation;
-}
-
-export interface SourceLocation {
-  filename: string;
+export interface SourceLine {
+  kind: "code" | "comment" | "blank";
+  raw: string;
+  label?: string;
+  mnemonic?: string;
+  operands: string[];
   lineNumber: number;
+  location: SourceLocation;
+  locationChain: SourceLocation[];
 }
 
-export interface DirectiveFrame {
-  type: "macro" | "if" | "repeat";
-  startLineNumber: number;
-  startLocation: SourceLocation;
-  count?: number;
-  body?: TaggedLine[];
-  currentIteration?: number;
-  lineIndex?: number;
-  condition?: boolean;
+const debugLog = (msg: string) => {
+  if (process.env.DEBUG_PREPROCESSOR) {
+    console.error(`[DEBUG] ${msg}`);
+  }
+};
+
+interface ConditionalFrame {
+  readonly type: "if";
+  readonly startLineNumber: number;
+  readonly startLocation: SourceLocation;
+  readonly branches: readonly { readonly condition: string; readonly isActive: boolean }[];
+  currentBranchIndex: number;
+  activeBranchIndex: number | null;
 }
 
-/**
- * Incrementally preprocesses source code, handling macros, conditionals, and repeats.
- * Returns lines with their original source locations preserved.
- */
+interface RepeatFrame {
+  readonly type: "repeat";
+  readonly startLineNumber: number;
+  readonly startLocation: SourceLocation;
+  readonly count: number;
+  readonly body: readonly TaggedLine[];
+  currentIteration: number;
+  lineIndex: number;
+}
+
+interface IncludeFrame {
+  readonly type: "include";
+  readonly startLineNumber: number;
+  readonly startLocation: SourceLocation;
+}
+
+interface MacroExpansionFrame {
+  readonly type: "macro";
+  readonly macroName: string;
+  readonly body: readonly TaggedLine[];
+  lineIndex: number;
+}
+
+type DirectiveFrame =
+  | ConditionalFrame
+  | RepeatFrame
+  | IncludeFrame
+  | MacroExpansionFrame;
+
 export class IncrementalPreprocessor {
+  private originalLines: readonly TaggedLine[];
   private lines: TaggedLine[];
   private lineIndex: number = 0;
+  private macros: Map<string, MacroDefinition> = new Map();
   private directiveStack: DirectiveFrame[] = [];
-  private macros: Map<string, TaggedLine[]> = new Map();
-  private filename: string;
 
-  constructor(source: string, options?: { sourcePath?: string }) {
-    this.filename = options?.sourcePath ?? "<source>";
-    const sourceLines = source.split(/\r?\n/);
-    this.lines = sourceLines.map((content, index) => ({
-      content,
-      location: { filename: this.filename, lineNumber: index + 1 },
-    }));
+  constructor(source: string, options: PreprocessorOptions = {}) {
+    // Use the preprocessor to get tagged lines with proper source locations
+    this.originalLines = preprocessSourceToTaggedLines(source, {
+      sourcePath: options.sourcePath,
+      readFile: options.readFile,
+    });
+    this.lines = [...this.originalLines];
+
+    debugLog(`Initialized with ${this.lines.length} lines`);
   }
 
-  nextLine(symbols: Map<string, unknown>): TaggedLine | null {
+  nextLine(symbols: ReadonlyMap<string, number>): SourceLine | null {
+    const tagged = this.nextTaggedLine(symbols);
+    if (!tagged) {
+      return null;
+    }
+
+    const parsed = parseLine(tagged.content, tagged.location.lineNumber);
+    return {
+      ...parsed,
+      location: tagged.location,
+      locationChain: [tagged.location],
+    };
+  }
+
+  private nextTaggedLine(
+    symbols: ReadonlyMap<string, number>,
+  ): TaggedLine | null {
     while (this.lineIndex < this.lines.length) {
-      const tagged = this.lines[this.lineIndex]!;
+      const line = this.lines[this.lineIndex]!;
       this.lineIndex += 1;
 
-      const processed = this.processTaggedLine(tagged, symbols);
-      if (processed !== null) {
-        return processed;
+      try {
+        const result = this.processTaggedLine(line, symbols);
+        if (result !== null) {
+          return result;
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        debugLog(
+          `ERROR at ${line.location.filename}:${line.location.lineNumber}: ${message}`,
+        );
+        return {
+          content: line.content,
+          location: line.location,
+        };
       }
     }
+
+    const repeatFrame = this.directiveStack.find((f) => f.type === "repeat") as
+      | RepeatFrame
+      | undefined;
+    if (repeatFrame && repeatFrame.currentIteration < repeatFrame.count - 1) {
+      repeatFrame.currentIteration += 1;
+      repeatFrame.lineIndex = 0;
+      return this.nextTaggedLine(symbols);
+    }
+
     return null;
   }
 
   private processTaggedLine(
-    tagged: TaggedLine,
-    symbols: Map<string, unknown>,
+    line: TaggedLine,
+    symbols: ReadonlyMap<string, number>,
   ): TaggedLine | null {
-    const line = tagged.content;
-    const trimmed = line.trim();
-
-    // Skip empty lines and comments
-    if (!trimmed || trimmed.startsWith(";") || trimmed.startsWith("*")) {
-      return tagged;
+    const trimmed = line.content.trim();
+    if (!trimmed || /^\s*[;*]/.test(line.content)) {
+      return line;
     }
 
-    // Check if we're in an inactive conditional
-    for (const frame of this.directiveStack) {
-      if (frame.type === "if" && frame.condition === false) {
-        // Skip lines in inactive conditionals
+    const parsed = parseLine(line.content, line.location.lineNumber);
+    if (parsed.kind === "code" && parsed.mnemonic) {
+      const mnemonic = parsed.mnemonic.toUpperCase();
+      if (mnemonic === ".IF") {
+        this.handleIfDirective(parsed.operands[0] ?? "0", this.evaluateCondition(parsed.operands[0] ?? "0", symbols), line.location);
+        return null;
+      }
+      if (mnemonic === ".ELSEIF") {
+        this.handleElseifDirective(parsed.operands[0] ?? "0", symbols, line.location);
+        return null;
+      }
+      if (mnemonic === ".ELSE") {
+        this.handleElseDirective(line.location);
+        return null;
+      }
+      if (mnemonic === ".ENDIF") {
+        this.handleEndifDirective(line.location);
+        return null;
+      }
+      if (mnemonic === ".MACRO") {
+        this.handleMacroDefinition(parsed, line.location);
+        return null;
+      }
+      // Check for inactive conditional BEFORE processing .REPEAT/.ENDREPEAT
+      // This prevents .repeat blocks inside inactive conditionals from corrupting the directive stack
+      if (this.isInInactiveConditional()) {
+        return null;
+      }
+      if (mnemonic === ".REPEAT") {
+        this.handleRepeatDirective(parsed, symbols, line.location);
+        return null;
+      }
+      if (mnemonic === ".ENDREPEAT") {
+        this.handleEndrepeatDirective(line.location);
+        return null;
+      }
+      const expanded = this.expandMacro(parsed, line, symbols);
+      if (expanded !== null) {
+        this.lines.splice(this.lineIndex, 0, ...expanded);
         return null;
       }
     }
-
-    // Parse the line to check for directives
-    const mnemonic = trimmed.split(/\s+/)[0]?.toUpperCase();
-
-    // Handle macro definition
-    if (mnemonic === ".MACRO") {
-      this.handleMacroDirective(tagged.location);
+    if (this.isInInactiveConditional()) {
       return null;
     }
-
-    // Handle macro expansion
-    if (mnemonic && this.macros.has(mnemonic)) {
-      return this.expandMacro(mnemonic, tagged.location);
-    }
-
-    // Handle conditional directives
-    if (mnemonic === ".IF") {
-      this.handleIfDirective(tagged.location);
-      return null;
-    }
-
-    if (mnemonic === ".ENDIF") {
-      this.handleEndifDirective(tagged.location);
-      return null;
-    }
-
-    // Handle repeat directive
-    if (mnemonic === ".REPEAT") {
-      this.handleRepeatDirective(tagged.location);
-      return null;
-    }
-
-    if (mnemonic === ".ENDREPEAT") {
-      this.handleEndrepeatDirective(tagged.location);
-      return null;
-    }
-
-    return tagged;
+    return line;
   }
 
-  private handleMacroDirective(location: SourceLocation): void {
-    const line = this.lines[this.lineIndex - 1]!.content;
-    const match = line.match(/\.MACRO\s+([A-Za-z0-9_]+)/i);
-    if (!match) return;
-
-    const macroName = match[1]!.toUpperCase();
+  private handleMacroDefinition(line: SourceLine, location: SourceLocation): void {
+    const name = line.operands[0]?.toUpperCase();
+    if (!name) {
+      throw new Error(`Macro definition missing name at ${location.filename}:${location.lineNumber}`);
+    }
+    const parameters = line.operands.slice(1);
     const body: TaggedLine[] = [];
-    let nesting = 0;
-
     while (this.lineIndex < this.lines.length) {
       const bodyLine = this.lines[this.lineIndex]!;
       this.lineIndex += 1;
-      const bodyParsed = bodyLine.content.trim().toUpperCase();
-
-      if (bodyParsed.startsWith(".MACRO")) nesting += 1;
-      else if (bodyParsed.startsWith(".ENDMACRO")) {
-        if (nesting === 0) break;
-        nesting -= 1;
-      }
-
+      const bodyParsed = parseLine(bodyLine.content, bodyLine.location.lineNumber);
+      if (bodyParsed.kind === "code" && bodyParsed.mnemonic?.toUpperCase() === ".ENDMACRO") break;
       body.push(bodyLine);
     }
-
-    this.macros.set(macroName, body);
+    this.macros.set(name, { name, parameters, body, lineNumber: location.lineNumber });
+    // Update the parser's known macros set so it recognizes macro names during parsing
+    setKnownMacros(new Set(this.macros.keys()));
   }
 
-  private expandMacro(
-    macroName: string,
-    location: SourceLocation,
-  ): TaggedLine | null {
-    const body = this.macros.get(macroName);
-    if (!body) return null;
-
-    // Insert the macro body into the lines array
-    const expandedBody = body.map((line) => ({
-      ...line,
-      location: {
-        ...line.location,
-        filename: `<macro:${macroName}>`,
-      },
-    }));
-
-    this.lines.splice(this.lineIndex - 1, 1, ...expandedBody);
-    this.lineIndex -= 1; // Back up to re-process the first line of the macro
-
-    return this.nextLine(new Map());
-  }
-
-  private handleIfDirective(location: SourceLocation): void {
-    const line = this.lines[this.lineIndex - 1]!.content;
-    const match = line.match(/\.IF\s+(.*)/i);
-    if (!match) {
-      this.directiveStack.push({
-        type: "if",
-        startLineNumber: location.lineNumber,
-        startLocation: location,
-        condition: true,
-      });
-      return;
-    }
-
-    const condition = this.evaluateCondition(match[1]!);
+  private handleIfDirective(condition: string, isActive: boolean, location: SourceLocation): void {
     this.directiveStack.push({
       type: "if",
       startLineNumber: location.lineNumber,
       startLocation: location,
-      condition,
+      branches: [{ condition, isActive }],
+      currentBranchIndex: 0,
+      activeBranchIndex: isActive ? 0 : null,
     });
+  }
+
+  private handleElseifDirective(condition: string, symbols: ReadonlyMap<string, number>, location: SourceLocation): void {
+    const frame = this.directiveStack[this.directiveStack.length - 1];
+    if (!frame || frame.type !== "if") throw new Error(`.elseif without matching .if at ${location.filename}:${location.lineNumber}`);
+    const isActive = frame.activeBranchIndex === null && this.evaluateCondition(condition, symbols);
+    (frame.branches as any).push({ condition, isActive });
+    frame.currentBranchIndex = frame.branches.length - 1;
+    if (isActive) frame.activeBranchIndex = frame.currentBranchIndex;
+  }
+
+  private handleElseDirective(location: SourceLocation): void {
+    const frame = this.directiveStack[this.directiveStack.length - 1];
+    if (!frame || frame.type !== "if") throw new Error(`.else without matching .if at ${location.filename}:${location.lineNumber}`);
+    const isActive = frame.activeBranchIndex === null;
+    (frame.branches as any).push({ condition: "else", isActive });
+    frame.currentBranchIndex = frame.branches.length - 1;
+    if (isActive) frame.activeBranchIndex = frame.currentBranchIndex;
   }
 
   private handleEndifDirective(location: SourceLocation): void {
     const frame = this.directiveStack[this.directiveStack.length - 1];
-    if (!frame || frame.type !== "if") {
-      throw new Error(
-        `.endif without matching .if at ${location.filename}:${location.lineNumber}`,
-      );
-    }
+    if (!frame || frame.type !== "if") throw new Error(`.endif without matching .if at ${location.filename}:${location.lineNumber}`);
     this.directiveStack.pop();
   }
 
-  private handleRepeatDirective(location: SourceLocation): void {
-    const line = this.lines[this.lineIndex - 1]!.content;
-    const match = line.match(/\.REPEAT\s+(\d+)/i);
-    if (!match) return;
-
-    const count = parseInt(match[1]!, 10);
+  private handleRepeatDirective(line: SourceLine, symbols: ReadonlyMap<string, number>, location: SourceLocation): void {
+    const countExpr = line.operands[0] ?? "0";
+    const countEval = evaluateExpressionDetailed(countExpr, symbols, 0);
+    const count = countEval.value ?? 0;
+    if (count < 0) throw new Error(`.repeat count must be non-negative at ${location.filename}:${location.lineNumber}`);
     const body: TaggedLine[] = [];
     let nesting = 0;
-
     while (this.lineIndex < this.lines.length) {
       const bodyLine = this.lines[this.lineIndex]!;
       this.lineIndex += 1;
-      const bodyMnemonic = bodyLine.content.trim().split(/\s+/)[0]?.toUpperCase();
-
-      if (bodyMnemonic === ".REPEAT") nesting += 1;
-      else if (bodyMnemonic === ".ENDREPEAT") {
-        if (nesting === 0) break;
-        nesting -= 1;
+      const bodyParsed = parseLine(bodyLine.content, bodyLine.location.lineNumber);
+      if (bodyParsed.kind === "code") {
+        const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
+        if (bodyMnemonic === ".REPEAT") nesting += 1;
+        else if (bodyMnemonic === ".ENDREPEAT") {
+          if (nesting === 0) break;
+          nesting -= 1;
+        }
       }
-
       body.push(bodyLine);
     }
-
-    this.directiveStack.push({
-      type: "repeat",
-      startLineNumber: location.lineNumber,
-      startLocation: location,
-      count,
-      body,
-      currentIteration: 0,
-      lineIndex: this.lineIndex,
-    });
-
-    // Splice the body into the lines array for the first iteration
-    this.lines.splice(this.lineIndex - body.length - 1, 0, ...body);
+    this.directiveStack.push({ type: "repeat", startLineNumber: location.lineNumber, startLocation: location, count, body, currentIteration: 0, lineIndex: 0 });
+    this.lines.splice(this.lineIndex, 0, ...body);
   }
 
   private handleEndrepeatDirective(location: SourceLocation): void {
     const frame = this.directiveStack[this.directiveStack.length - 1];
-    if (!frame || frame.type !== "repeat")
-      throw new Error(
-        `.endrepeat without matching .repeat at ${location.filename}:${location.lineNumber}`,
-      );
-    if (frame.currentIteration! < frame.count! - 1) {
-      frame.currentIteration! += 1;
-      this.lines.splice(this.lineIndex, 0, ...frame.body!);
+    if (!frame || frame.type !== "repeat") throw new Error(`.endrepeat without matching .repeat at ${location.filename}:${location.lineNumber}`);
+    if (frame.currentIteration < frame.count - 1) {
+      frame.currentIteration += 1;
+      this.lines.splice(this.lineIndex, 0, ...frame.body);
     } else {
       this.directiveStack.pop();
     }
   }
 
-  private evaluateCondition(expr: string): boolean {
-    // Simple condition evaluation - just check if it's non-zero or non-empty
-    return expr.trim() !== "0" && expr.trim() !== "";
+  private expandMacro(line: SourceLine, taggedLine: TaggedLine, symbols: ReadonlyMap<string, number>): TaggedLine[] | null {
+    if (line.kind !== "code" || !line.mnemonic) return null;
+    const macro = this.macros.get(line.mnemonic.toUpperCase());
+    if (!macro) return null;
+    const substitutions = new Map<string, string>();
+    macro.parameters.forEach((param, index) => {
+      substitutions.set(param, line.operands[index] ?? "");
+      substitutions.set(String(index + 1), line.operands[index] ?? "");
+    });
+    const expanded: TaggedLine[] = macro.body.map((bodyLine) => {
+      let content = bodyLine.content;
+      for (const [param, value] of substitutions.entries()) content = content.replaceAll(`\\${param}`, value);
+      return {
+        content,
+        location: {
+          filename: `<macro:${macro.name}>`,
+          lineNumber: bodyLine.location.lineNumber,
+        },
+      };
+    });
+    if (line.label && expanded.length > 0) {
+      const firstLine = expanded[0]!;
+      expanded[0] = { ...firstLine, content: `${line.label} ${firstLine.content}` };
+    }
+    return expanded;
   }
+
+  private isInInactiveConditional(): boolean {
+    for (const frame of this.directiveStack) {
+      if (frame.type === "if" && frame.activeBranchIndex === null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private evaluateCondition(expr: string, symbols: ReadonlyMap<string, number>): boolean {
+    const result = evaluateExpressionDetailed(expr, symbols, 0);
+    return result.value !== null && result.value !== 0;
+  }
+}
+
+interface MacroDefinition {
+  readonly name: string;
+  readonly parameters: readonly string[];
+  readonly body: readonly TaggedLine[];
+  readonly lineNumber: number;
+}
+
+export interface PreprocessorOptions {
+  readonly sourcePath?: string;
+  readonly readFile?: (filePath: string) => string;
 }
