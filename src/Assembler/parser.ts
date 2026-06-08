@@ -1,105 +1,172 @@
-import { getDirectiveMetadata, isDirective } from "./directives.js";
-
+import { isDirective } from "./directives.js";
 import type { SourceLine } from "./types.js";
 import { opcodes } from "./opcodes.js";
 
 const commentOnlyPattern = /^\s*(?:[;*].*)?$/;
-
-/**
- * Set of known macro names (populated by preprocessor)
- */
 let knownMacros: Set<string> = new Set();
 
-/**
- * Set the known macros (called by preprocessor before parsing)
- */
 export function setKnownMacros(macros: Set<string>): void {
   knownMacros = new Set(macros);
 }
 
-/**
- * Check if a token is a known macro
- */
 function isKnownMacro(token: string): boolean {
   return knownMacros.has(token.toUpperCase());
 }
 
-export function parseSource(text: string): SourceLine[] {
-  const lines = text.split(/\r?\n/);
-
-  return lines.map((raw, index) => parseLine(raw, index + 1));
+function isKnownMnemonic(token: string): boolean {
+  const upper = token.toUpperCase();
+  return opcodes[upper] !== undefined || isDirective(upper);
 }
 
+function looksLikeLabel(token: string): boolean {
+  return /^(?:@)?[A-Za-z_][A-Za-z0-9_]*$/.test(token);
+}
+
+export function parseSource(text: string): SourceLine[] {
+  return text.split(/\r?\n/).map((raw, index) => parseLine(raw, index + 1));
+}
+
+/**
+ * Parse a single line of assembly source.
+ *
+ * Grammar (after stripping comments):
+ *   line    ::= blank | comment | code
+ *   code    ::= [label [':' | '=']] [mnemonic [operands]]
+ *   label   ::= /[A-Za-z_@][A-Za-z0-9_]* /
+ *   mnemonic::= opcode | directive | macro-name
+ *   operands::= operand (',' operand)*
+ *
+ * Rules for distinguishing label vs mnemonic when no colon is present:
+ *   - Token followed by '=' -> it is a label with '=' as mnemonic
+ *   - Token is a known directive/opcode/macro -> it is a mnemonic (no label)
+ *   - Token looks like a label AND next token is directive/opcode/macro -> label + mnemonic
+ *   - Token looks like a label AND next token is unknown -> label + mnemonic (unrecognised mnemonic)
+ *   - Single token that looks like a label -> label-only anchor
+ *   - Single token that is a known mnemonic -> mnemonic-only
+ */
 export function parseLine(raw: string, lineNumber: number): SourceLine {
   const trimmed = raw.trim();
-
   if (trimmed.length === 0) {
     return { lineNumber, raw, kind: "blank", operands: [], locationChain: [] };
   }
-
   if (commentOnlyPattern.test(raw)) {
     return { lineNumber, raw, kind: "comment", operands: [], locationChain: [] };
   }
 
   const [codePart, commentPart] = splitComment(raw);
-
-  // Normalize spacing around = operator (but not == or !=)
-  // This allows `count=5` to be parsed the same as `count = 5`
-  const normalized = codePart
-    .split(/\s*((?:[.@]?\w+:?)|"[^"]*"|'[^']*'|[^.@:"'\w\s]+)\s*/)
-    .join(" ");
-
-  const tokens = normalized.trim().split(/\s+/).filter(Boolean);
-
-  if (tokens.length === 0) {
+  const text = codePart.trim();
+  if (text.length === 0) {
     return { lineNumber, raw, kind: "comment", operands: [], locationChain: [] };
   }
 
-  const firstToken = tokens[0]!;
-  const secondToken = tokens[1];
-  let label: string | undefined;
-  let mnemonic: string | undefined;
-  let operands: string[] = [];
-
-  if (firstToken.endsWith(":")) {
-    label = firstToken.slice(0, -1);
-    mnemonic = secondToken;
-    operands = collectOperands(tokens.slice(2));
-  } else if (
-    tokens.length === 1 &&
-    isLikelyLabel(firstToken) &&
-    !isKnownMnemonic(firstToken) &&
-    !isKnownMacro(firstToken)
-  ) {
-    label = firstToken;
-    mnemonic = undefined;
-    operands = [];
-  } else if (
-    tokens.length >= 2 &&
-    isLikelyLabel(firstToken) &&
-    secondToken !== undefined &&
-    isDirectiveOrAssignment(secondToken)
-  ) {
-    label = firstToken;
-    mnemonic = secondToken;
-    operands = collectOperands(tokens.slice(2));
-  } else if (
-    tokens.length >= 2 &&
-    isLikelyLabel(firstToken) &&
-    !isKnownMnemonic(firstToken) &&
-    !isKnownMacro(firstToken)
-  ) {
-    label = firstToken;
-    mnemonic = secondToken;
-    operands = collectOperands(tokens.slice(2));
-  } else if (isKnownMacro(firstToken)) {
-    mnemonic = firstToken;
-    operands = collectOperands(tokens.slice(1));
-  } else {
-    mnemonic = firstToken;
-    operands = collectOperands(tokens.slice(1));
+  let parts = splitTopLevelWhitespace(text);
+  if (parts.length === 0) {
+    return { lineNumber, raw, kind: "comment", operands: [], locationChain: [] };
   }
 
+  // Normalize compact assignment forms: "a=b" -> ["a", "=", "b"]
+  // Also handles "a =b" -> ["a", "=b"] -> ["a", "=", "b"]
+  // and "a= b" -> ["a=", "b"] -> ["a", "=", "b"]
+  if (parts.length >= 1) {
+    const first = parts[0]!;
+    const eqInFirst = /^([A-Za-z_@][A-Za-z0-9_]*)=(.*)$/.exec(first);
+    if (eqInFirst) {
+      // "a=b" or "a=": split into ["a", "=", "b", ...rest]
+      const rest = eqInFirst[2]!.length > 0
+        ? [eqInFirst[2]!, ...parts.slice(1)]
+        : parts.slice(1);
+      parts = [eqInFirst[1]!, "=", ...rest];
+    } else if (parts.length >= 2) {
+      const second = parts[1]!;
+      if (second.startsWith("=") && second.length > 1) {
+        // "a =expr": split "=expr" into ["=", "expr"]
+        parts = [first, "=", second.slice(1), ...parts.slice(2)];
+      } else if (first.endsWith("=") && looksLikeLabel(first.slice(0, -1))) {
+        // "a= b": "a=" -> ["a", "="]
+        parts = [first.slice(0, -1), "=", ...parts.slice(1)];
+      }
+    }
+  }
+
+  let label: string | undefined;
+  let mnemonic: string | undefined;
+  let operandStart = 0;
+
+  // --- Case 1: explicit colon label ---
+  if (parts[0]!.endsWith(":")) {
+    label = parts[0]!.slice(0, -1);
+    if (parts.length === 1) {
+      // label-only with colon
+      return {
+        lineNumber, raw, kind: "code", label, operands: [], locationChain: [],
+        ...(commentPart !== undefined ? { comment: commentPart } : {}),
+      };
+    }
+    const candidate = parts[1]!;
+    if (
+      candidate === "=" ||
+      isDirective(candidate.toUpperCase()) ||
+      isKnownMnemonic(candidate) ||
+      isKnownMacro(candidate)
+    ) {
+      mnemonic = candidate;
+      operandStart = 2;
+    } else {
+      // label: followed by unknown token -- treat as label + mnemonic
+      mnemonic = candidate;
+      operandStart = 2;
+    }
+
+  // --- Case 2: assignment  label = expr  or  label = expr  ---
+  } else if (parts.length >= 2 && parts[1] === "=") {
+    label = parts[0]!;
+    mnemonic = "=";
+    operandStart = 2;
+
+  // --- Case 3: first token looks like label, second is directive/opcode/macro ---
+  } else if (
+    parts.length >= 2 &&
+    looksLikeLabel(parts[0]!) &&
+    (
+      isDirective(parts[1]!.toUpperCase()) ||
+      isKnownMnemonic(parts[1]!) ||
+      isKnownMacro(parts[1]!) ||
+      parts[1] === "="
+    )
+  ) {
+    label = parts[0]!;
+    mnemonic = parts[1]!;
+    operandStart = 2;
+
+  // --- Case 4: single known mnemonic ---
+  } else if (parts.length === 1 && (isKnownMnemonic(parts[0]!) || isKnownMacro(parts[0]!))) {
+    mnemonic = parts[0]!;
+    operandStart = 1;
+
+  // --- Case 5: single label-only anchor ---
+  } else if (parts.length === 1 && looksLikeLabel(parts[0]!)) {
+    label = parts[0]!;
+    operandStart = 1;
+
+  // --- Case 6: first token is a known mnemonic ---
+  } else if (isKnownMnemonic(parts[0]!) || isKnownMacro(parts[0]!)) {
+    mnemonic = parts[0]!;
+    operandStart = 1;
+
+  // --- Case 7: label + unknown mnemonic (e.g. "start loadpair 1, 2" when
+  //     macros haven't been registered yet, or an unknown directive) ---
+  } else if (parts.length >= 2 && looksLikeLabel(parts[0]!)) {
+    label = parts[0]!;
+    mnemonic = parts[1]!;
+    operandStart = 2;
+
+  // --- Case 8: fallback -- treat first token as mnemonic ---
+  } else {
+    mnemonic = parts[0]!;
+    operandStart = 1;
+  }
+
+  const operands = splitOperands(parts.slice(operandStart).join(" "));
   return {
     lineNumber,
     raw,
@@ -112,129 +179,98 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function splitComment(raw: string): [string, string | undefined] {
   let quote: '"' | "'" | undefined;
   let escaped = false;
-
   for (let i = 0; i < raw.length; i += 1) {
     const ch = raw[i]!;
-
     if (quote !== undefined) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-
-      if (ch === quote) {
-        quote = undefined;
-      }
+      if (escaped) { escaped = false; continue; }
+      if (ch === "\\") { escaped = true; continue; }
+      if (ch === quote) quote = undefined;
       continue;
     }
-
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
     if (ch === ";") {
-      const codePart = raw.slice(0, i);
-      const commentPart = raw.slice(i + 1).trim();
-      return [codePart, commentPart.length > 0 ? commentPart : undefined];
+      const commentText = raw.slice(i + 1).trim();
+      return [raw.slice(0, i), commentText.length > 0 ? commentText : undefined];
     }
   }
-
   return [raw, undefined];
 }
 
-function collectOperands(tokens: string[]): string[] {
-  const text = tokens.join(" ");
-  if (text.trim().length === 0) {
-    return [];
-  }
-
-  const operands: string[] = [];
-  let current = "";
+/**
+ * Split on top-level whitespace only (respecting quotes and parentheses).
+ * This preserves expression tokens like $8000, #$01, (base+3)*2 intact.
+ * A string literal immediately following a non-space token is treated as
+ * a separate token (e.g. DCI"END" -> ["DCI", '"END"']).
+ */
+function splitTopLevelWhitespace(text: string): string[] {
+  const out: string[] = [];
+  let cur = "";
   let quote: '"' | "'" | undefined;
   let escaped = false;
-  let parenDepth = 0;
-
+  let depth = 0;
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i]!;
-
     if (quote !== undefined) {
-      current += ch;
-
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-
-      if (ch === quote) {
-        quote = undefined;
-      }
+      cur += ch;
+      if (escaped) { escaped = false; continue; }
+      if (ch === "\\") { escaped = true; continue; }
+      if (ch === quote) quote = undefined;
       continue;
     }
-
     if (ch === '"' || ch === "'") {
-      quote = ch;
-      current += ch;
+      // Split string literal off from a preceding non-string token
+      if (cur.length > 0) { out.push(cur); cur = ""; }
+      quote = ch; cur += ch; continue;
+    }
+    if (ch === "(") { depth += 1; cur += ch; continue; }
+    if (ch === ")") { if (depth > 0) depth -= 1; cur += ch; continue; }
+    if (/\s/.test(ch) && depth === 0) {
+      if (cur.length > 0) { out.push(cur); cur = ""; }
       continue;
     }
-
-    if (ch === "(") {
-      parenDepth += 1;
-      current += ch;
-      continue;
-    }
-
-    if (ch === ")") {
-      if (parenDepth > 0) {
-        parenDepth -= 1;
-      }
-      current += ch;
-      continue;
-    }
-
-    if (ch === "," && parenDepth === 0) {
-      const operand = current.trim();
-      if (operand.length > 0) {
-        operands.push(operand);
-      }
-      current = "";
-      continue;
-    }
-
-    current += ch;
+    cur += ch;
   }
+  if (cur.length > 0) out.push(cur);
+  return out;
+}
 
-  const tail = current.trim();
-  if (tail.length > 0) {
-    operands.push(tail);
+/**
+ * Split operands on top-level commas (respecting quotes and parentheses).
+ */
+function splitOperands(text: string): string[] {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return [];
+  const out: string[] = [];
+  let cur = "";
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+  let depth = 0;
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const ch = trimmed[i]!;
+    if (quote !== undefined) {
+      cur += ch;
+      if (escaped) { escaped = false; continue; }
+      if (ch === "\\") { escaped = true; continue; }
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; cur += ch; continue; }
+    if (ch === "(") { depth += 1; cur += ch; continue; }
+    if (ch === ")") { if (depth > 0) depth -= 1; cur += ch; continue; }
+    if (ch === "," && depth === 0) {
+      if (cur.trim().length > 0) out.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
   }
-
-  return operands;
-}
-
-function isLikelyLabel(token: string): boolean {
-  return /^(?:@)?[A-Za-z_][A-Za-z0-9_]*$/.test(token);
-}
-
-function isKnownMnemonic(token: string): boolean {
-  const upper = token.toUpperCase();
-  return opcodes[upper] !== undefined || isDirective(upper);
-}
-
-function isDirectiveOrAssignment(token: string): boolean {
-  const upper = token.toUpperCase();
-  return isDirective(upper);
+  if (cur.trim().length > 0) out.push(cur.trim());
+  return out;
 }
