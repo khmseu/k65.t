@@ -58,10 +58,7 @@ export class IncrementalPreprocessor {
 
   constructor(source: string, options: PreprocessorOptions = {}) {
     // Use the preprocessor to get tagged lines with proper source locations
-    this.originalLines = preprocessSourceToTaggedLines(source, {
-      sourcePath: options.sourcePath,
-      readFile: options.readFile,
-    });
+    this.originalLines = preprocessSourceToTaggedLines(source, options as any);
     this.lines = [...this.originalLines];
 
     debugLog(`Initialized with ${this.lines.length} lines`);
