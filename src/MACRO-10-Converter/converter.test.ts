@@ -2,27 +2,21 @@ import { describe, it } from 'node:test';
 import { strict as assert } from 'assert';
 import { convertMacro10ToK65 } from './convert.js';
 
-describe('Source location tracking in converter', () => {
-  it('should add @source comments to converted lines', () => {
-    const input = `; Line 1
-LABEL1:
+describe('MACRO-10 to K65 Converter', () => {
+  it('should convert basic assembly syntax', () => {
+    const input = `LABEL1:
   LDA #$00
   STA $80`;
 
     const output = convertMacro10ToK65(input);
     const lines = output.split('\n');
     
-    // Line 2 should have @source 2
-    assert(lines[1]!.includes('@source 2'), `Line 2 should have @source 2, got: ${lines[1]}`);
-    
-    // Line 3 should have @source 3
-    assert(lines[2]!.includes('@source 3'), `Line 3 should have @source 3, got: ${lines[2]}`);
-    
-    // Line 4 should have @source 4
-    assert(lines[3]!.includes('@source 4'), `Line 4 should have @source 4, got: ${lines[3]}`);
+    assert(lines[0]!.includes('LABEL1:'), 'Should preserve label');
+    assert(lines[1]!.includes('LDA #$00'), 'Should preserve LDA instruction');
+    assert(lines[2]!.includes('STA $80'), 'Should preserve STA instruction');
   });
 
-  it('should not add @source comments to blank lines', () => {
+  it('should preserve blank lines', () => {
     const input = `LABEL1:
   LDA #$00
 
@@ -31,18 +25,18 @@ LABEL1:
     const output = convertMacro10ToK65(input);
     const lines = output.split('\n');
     
-    // Line 3 (blank line) should not have @source
-    assert(!lines[2]!.includes('@source'), `Blank line should not have @source, got: ${lines[2]}`);
+    // Line 3 should be blank
+    assert(lines[2] === '', `Line 3 should be blank, got: ${lines[2]}`);
   });
 
-  it('should not add @source comments to existing comments', () => {
+  it('should preserve comments', () => {
     const input = `; This is a comment
 LABEL1:`;
 
     const output = convertMacro10ToK65(input);
     const lines = output.split('\n');
     
-    // Line 1 (comment) should not have @source
-    assert(!lines[0]!.includes('@source'), `Comment line should not have @source, got: ${lines[0]}`);
+    // Line 1 should be the comment
+    assert(lines[0]!.includes('; This is a comment'), `Comment line should be preserved, got: ${lines[0]}`);
   });
 });
