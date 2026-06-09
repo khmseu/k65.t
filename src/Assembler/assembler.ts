@@ -10,11 +10,9 @@ import {
   opcodes,
   type AddressingMode,
 } from "./opcodes.js";
-import { preprocessSource } from "./preprocessor.js";
 import {
   AssemblerError,
   ErrorWithLocation,
-  PreprocessError,
 } from "./location-errors.js";
 import type {
   AssemblyDiagnostic,
@@ -64,50 +62,62 @@ export function assemble(
   sourceText: string,
   options: AssembleOptions = {},
 ): AssemblyResult {
-  let preprocessed: string = "";
   const diagnostics: AssemblyDiagnostic[] = [];
 
+  let sized: PassState;
   try {
-    preprocessed = preprocessSource(sourceText, {
-      ...(options.sourcePath !== undefined
-        ? { sourcePath: options.sourcePath }
-        : {}),
-      ...(options.readFile !== undefined ? { readFile: options.readFile } : {}),
-    });
+    sized = runSizingPasses(sourceText, options);
   } catch (error) {
-    const filename = options.sourcePath ?? "<source>";
-    if (error instanceof ErrorWithLocation) {
-      diagnostics.push({
-        code: error.code,
-        level: "error",
-        message: error.message,
-        location: error.location,
-      });
-    } else {
-      diagnostics.push({
-        code: "E_PREPROCESS",
-        level: "error",
-        message:
-          error instanceof Error ? error.message : "Preprocessing failed",
-        location: { filename, lineNumber: 1 },
-      });
-    }
-    return {
-      binary: new Uint8Array(),
-      listing: [],
-      symbols: [],
+    const message = error instanceof Error ? error.message : "Unknown error";
+    diagnostics.push({
+      code: "E_PREPROCESS",
+      level: "error",
+      message,
+      location: { filename: options.sourcePath ?? "<source>", lineNumber: 1 },
+    });
+    sized = {
+      symbols: new Map(),
+      lineSymbols: [],
+      lineScopes: [],
+      lineSizes: [],
       startAddress: 0,
-      diagnostics,
+      endAddress: 0,
+    };
+  }
+  try {
+    diagnostics.push(...collectDiagnostics(sourceText, sized, options));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    diagnostics.push({
+      code: "E_PREPROCESS",
+      level: "error",
+      message,
+      location: { filename: options.sourcePath ?? "<source>", lineNumber: 1 },
+    });
+  }
+  let emitted: {
+    binary: Uint8Array;
+    listing: ListingLine[];
+    bytesPerLine: number;
+    pageSize: number;
+  };
+  try {
+    emitted = emitBinary(sourceText, sized, options);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    diagnostics.push({
+      code: "E_PREPROCESS",
+      level: "error",
+      message,
+      location: { filename: options.sourcePath ?? "<source>", lineNumber: 1 },
+    });
+    emitted = {
+      binary: new Uint8Array(0),
+      listing: [],
       bytesPerLine: 16,
       pageSize: 0,
     };
   }
-
-  const sized = runSizingPasses(preprocessed, options.sourcePath);
-  diagnostics.push(
-    ...collectDiagnostics(preprocessed, sized, options.sourcePath),
-  );
-  const emitted = emitBinary(preprocessed, sized, options.sourcePath);
   const symbols: SymbolEntry[] = Array.from(sized.symbols.entries())
     .map(([name, value]) => ({ name: displaySymbolName(name), value }))
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -125,7 +135,7 @@ export function assemble(
 
 function runSizingPasses(
   sourceText: string,
-  sourcePath: string | undefined,
+  options: AssembleOptions,
 ): PassState {
   let symbols = new Map<string, number>();
   let previousSizes = new Array<number>();
@@ -146,7 +156,10 @@ function runSizingPasses(
     let currentScope: string | undefined;
 
     const preprocessor = new IncrementalPreprocessor(sourceText, {
-      ...(sourcePath !== undefined ? { sourcePath } : {}),
+      ...(options.sourcePath !== undefined
+        ? { sourcePath: options.sourcePath }
+        : {}),
+      ...(options.readFile !== undefined ? { readFile: options.readFile } : {}),
     });
 
     let line: SourceLine | null;
@@ -237,12 +250,15 @@ function runSizingPasses(
 function collectDiagnostics(
   sourceText: string,
   passState: PassState,
-  sourcePath: string | undefined,
+  options: AssembleOptions,
 ): AssemblyDiagnostic[] {
   const diagnostics: AssemblyDiagnostic[] = [];
   let location = passState.startAddress;
   const preprocessor = new IncrementalPreprocessor(sourceText, {
-    ...(sourcePath !== undefined ? { sourcePath } : {}),
+    ...(options.sourcePath !== undefined
+      ? { sourcePath: options.sourcePath }
+      : {}),
+    ...(options.readFile !== undefined ? { readFile: options.readFile } : {}),
   });
   let line: SourceLine | null;
   let lineIndex = 0;
@@ -253,7 +269,6 @@ function collectDiagnostics(
       continue;
     }
     const mnemonic = normalizeMnemonic(line.mnemonic);
-    // Use per-line symbol snapshot for correct reassignable-label semantics
     const symbols = new Map(
       passState.lineSymbols[lineIndex] ?? passState.symbols,
     );
@@ -662,7 +677,7 @@ function sizeLine(
 function emitBinary(
   sourceText: string,
   passState: PassState,
-  sourcePath: string | undefined,
+  options: AssembleOptions,
 ): {
   binary: Uint8Array;
   listing: ListingLine[];
@@ -677,7 +692,10 @@ function emitBinary(
   let maxAddress = Number.NEGATIVE_INFINITY;
   let currentScope: string | undefined;
   const preprocessor = new IncrementalPreprocessor(sourceText, {
-    ...(sourcePath !== undefined ? { sourcePath } : {}),
+    ...(options.sourcePath !== undefined
+      ? { sourcePath: options.sourcePath }
+      : {}),
+    ...(options.readFile !== undefined ? { readFile: options.readFile } : {}),
   });
   let line: SourceLine | null;
   let lineIndex = 0;
@@ -689,11 +707,10 @@ function emitBinary(
         source: line.raw,
         target: undefined,
       });
-      lineIndex += 1; // count non-code lines to stay in sync with lineSymbols/lineScopes
+      lineIndex += 1;
       continue;
     }
     const mnemonic = normalizeMnemonic(line.mnemonic);
-    // Use per-line symbol snapshot for correct reassignable-label semantics
     const symbols = new Map(
       passState.lineSymbols[lineIndex] ?? passState.symbols,
     );
