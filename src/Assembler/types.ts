@@ -21,14 +21,13 @@ export interface TaggedLine {
  * Parsed assembly source line
  */
 export interface SourceLine {
-  readonly lineNumber: number;
   readonly raw: string;
   readonly kind: "blank" | "comment" | "code";
   readonly operands: readonly string[];
   readonly label?: string;
   readonly mnemonic?: string;
   readonly comment?: string;
-  readonly location?: SourceLocation;
+  readonly location: SourceLocation;
   readonly locationChain: readonly SourceLocation[];
 }
 
@@ -51,7 +50,8 @@ export interface MacroDefinition {
   readonly name: string;
   readonly parameters: readonly string[];
   readonly body: readonly TaggedLine[];
-  readonly lineNumber: number;
+  readonly location: SourceLocation;
+  readonly locationChain: readonly SourceLocation[];
 }
 
 /**

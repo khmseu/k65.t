@@ -1,7 +1,9 @@
+import { ErrorKind } from "./location-errors.js";
+
 export interface ExpressionEvaluation {
   readonly value: number | null;
   readonly error: string | null;
-  readonly errorCode: string | null;
+  readonly errorCode: ErrorKind | null;
   readonly errorColumn: number | null;
 }
 
@@ -28,7 +30,7 @@ class ExpressionParser {
   private readonly location: number;
   private position = 0;
   private error: string | null = null;
-  private errorCode: string | null = null;
+  private errorCode: ErrorKind | null = null;
   private errorColumn: number | null = null;
 
   constructor(
@@ -549,7 +551,7 @@ class ExpressionParser {
     }
   }
 
-  private fail(message: string, code: string, column: number): void {
+  private fail(message: string, code: ErrorKind, column: number): void {
     if (this.error === null) {
       this.error = message;
       this.errorCode = code;

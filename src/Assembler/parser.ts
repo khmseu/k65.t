@@ -1,5 +1,6 @@
+import type { SourceLine, SourceLocation } from "./types.js";
+
 import { isDirective } from "./directives.js";
-import type { SourceLine } from "./types.js";
 import { opcodes } from "./opcodes.js";
 
 const commentOnlyPattern = /^\s*(?:[;*].*)?$/;
@@ -22,8 +23,10 @@ function looksLikeLabel(token: string): boolean {
   return /^(?:@)?[A-Za-z_][A-Za-z0-9_]*$/.test(token);
 }
 
-export function parseSource(text: string): SourceLine[] {
-  return text.split(/\r?\n/).map((raw, index) => parseLine(raw, index + 1));
+export function parseSource(text: string, filename: string): SourceLine[] {
+  return text
+    .split(/\r?\n/)
+    .map((raw, index) => parseLine(raw, { filename, lineNumber: index + 1 }));
 }
 
 /**
@@ -44,24 +47,24 @@ export function parseSource(text: string): SourceLine[] {
  *   - Single token that looks like a label -> label-only anchor
  *   - Single token that is a known mnemonic -> mnemonic-only
  */
-export function parseLine(raw: string, lineNumber: number): SourceLine {
+export function parseLine(raw: string, location: SourceLocation): SourceLine {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
-    return { lineNumber, raw, kind: "blank", operands: [], locationChain: [] };
+    return { location, raw, kind: "blank", operands: [], locationChain: [] };
   }
   if (commentOnlyPattern.test(raw)) {
-    return { lineNumber, raw, kind: "comment", operands: [], locationChain: [] };
+    return { location, raw, kind: "comment", operands: [], locationChain: [] };
   }
 
   const [codePart, commentPart] = splitComment(raw);
   const text = codePart.trim();
   if (text.length === 0) {
-    return { lineNumber, raw, kind: "comment", operands: [], locationChain: [] };
+    return { location, raw, kind: "comment", operands: [], locationChain: [] };
   }
 
   let parts = splitTopLevelWhitespace(text);
   if (parts.length === 0) {
-    return { lineNumber, raw, kind: "comment", operands: [], locationChain: [] };
+    return { location, raw, kind: "comment", operands: [], locationChain: [] };
   }
 
   // Normalize compact assignment forms: "a=b" -> ["a", "=", "b"]
@@ -72,9 +75,10 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
     const eqInFirst = /^([A-Za-z_@][A-Za-z0-9_]*)=(.*)$/.exec(first);
     if (eqInFirst) {
       // "a=b" or "a=": split into ["a", "=", "b", ...rest]
-      const rest = eqInFirst[2]!.length > 0
-        ? [eqInFirst[2]!, ...parts.slice(1)]
-        : parts.slice(1);
+      const rest =
+        eqInFirst[2]!.length > 0
+          ? [eqInFirst[2]!, ...parts.slice(1)]
+          : parts.slice(1);
       parts = [eqInFirst[1]!, "=", ...rest];
     } else if (parts.length >= 2) {
       const second = parts[1]!;
@@ -98,7 +102,12 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
     if (parts.length === 1) {
       // label-only with colon
       return {
-        lineNumber, raw, kind: "code", label, operands: [], locationChain: [],
+        location,
+        raw,
+        kind: "code",
+        label,
+        operands: [],
+        locationChain: [],
         ...(commentPart !== undefined ? { comment: commentPart } : {}),
       };
     }
@@ -117,50 +126,51 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
       operandStart = 2;
     }
 
-  // --- Case 2: assignment  label = expr  or  label = expr  ---
+    // --- Case 2: assignment  label = expr  or  label = expr  ---
   } else if (parts.length >= 2 && parts[1] === "=") {
     label = parts[0]!;
     mnemonic = "=";
     operandStart = 2;
 
-  // --- Case 3: first token looks like label, second is directive/opcode/macro ---
+    // --- Case 3: first token looks like label, second is directive/opcode/macro ---
   } else if (
     parts.length >= 2 &&
     looksLikeLabel(parts[0]!) &&
-    (
-      isDirective(parts[1]!.toUpperCase()) ||
+    (isDirective(parts[1]!.toUpperCase()) ||
       isKnownMnemonic(parts[1]!) ||
       isKnownMacro(parts[1]!) ||
-      parts[1] === "="
-    )
+      parts[1] === "=")
   ) {
     label = parts[0]!;
     mnemonic = parts[1]!;
     operandStart = 2;
 
-  // --- Case 4: single known mnemonic ---
-  } else if (parts.length === 1 && (isKnownMnemonic(parts[0]!) || isKnownMacro(parts[0]!))) {
+    // --- Case 4: single known mnemonic ---
+  } else if (
+    parts.length === 1 &&
+    (isKnownMnemonic(parts[0]!) || isKnownMacro(parts[0]!))
+  ) {
     mnemonic = parts[0]!;
     operandStart = 1;
 
-  // --- Case 5: single label-only anchor ---
+    // --- Case 5: single label-only anchor ---
   } else if (parts.length === 1 && looksLikeLabel(parts[0]!)) {
     label = parts[0]!;
     operandStart = 1;
 
-  // --- Case 6: first token is a known mnemonic ---
+    // --- Case 6: first token is a known mnemonic ---
   } else if (isKnownMnemonic(parts[0]!) || isKnownMacro(parts[0]!)) {
     mnemonic = parts[0]!;
     operandStart = 1;
 
-  // --- Case 7: label + unknown mnemonic (e.g. "start loadpair 1, 2" when
-  //     macros haven't been registered yet, or an unknown directive) ---
+    // --- Case 7: label + unknown mnemonic (e.g. "start loadpair 1, 2" when
+    //     macros haven't been registered yet, or an unknown directive) ---
   } else if (parts.length >= 2 && looksLikeLabel(parts[0]!)) {
     label = parts[0]!;
     mnemonic = parts[1]!;
     operandStart = 2;
 
-  // --- Case 8: fallback -- treat first token as mnemonic ---
+    // --- Case 8: fallback -- treat first token as mnemonic ---
   } else {
     mnemonic = parts[0]!;
     operandStart = 1;
@@ -168,7 +178,7 @@ export function parseLine(raw: string, lineNumber: number): SourceLine {
 
   const operands = splitOperands(parts.slice(operandStart).join(" "));
   return {
-    lineNumber,
+    location,
     raw,
     kind: "code",
     operands,
@@ -189,15 +199,27 @@ function splitComment(raw: string): [string, string | undefined] {
   for (let i = 0; i < raw.length; i += 1) {
     const ch = raw[i]!;
     if (quote !== undefined) {
-      if (escaped) { escaped = false; continue; }
-      if (ch === "\\") { escaped = true; continue; }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
       if (ch === quote) quote = undefined;
       continue;
     }
-    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
     if (ch === ";") {
       const commentText = raw.slice(i + 1).trim();
-      return [raw.slice(0, i), commentText.length > 0 ? commentText : undefined];
+      return [
+        raw.slice(0, i),
+        commentText.length > 0 ? commentText : undefined,
+      ];
     }
   }
   return [raw, undefined];
@@ -222,8 +244,14 @@ function splitTopLevelWhitespace(text: string): string[] {
     const ch = text[i]!;
     if (quote !== undefined) {
       cur += ch;
-      if (escaped) { escaped = false; continue; }
-      if (ch === "\\") { escaped = true; continue; }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
       if (ch === quote) {
         quote = undefined;
         // String is complete. If next char is non-whitespace and non-paren,
@@ -241,13 +269,29 @@ function splitTopLevelWhitespace(text: string): string[] {
     }
     if (ch === '"' || ch === "'") {
       // Split string literal off from a preceding non-string token
-      if (cur.length > 0) { out.push(cur); cur = ""; }
-      quote = ch; cur += ch; continue;
+      if (cur.length > 0) {
+        out.push(cur);
+        cur = "";
+      }
+      quote = ch;
+      cur += ch;
+      continue;
     }
-    if (ch === "(") { depth += 1; cur += ch; continue; }
-    if (ch === ")") { if (depth > 0) depth -= 1; cur += ch; continue; }
+    if (ch === "(") {
+      depth += 1;
+      cur += ch;
+      continue;
+    }
+    if (ch === ")") {
+      if (depth > 0) depth -= 1;
+      cur += ch;
+      continue;
+    }
     if (/\s/.test(ch) && depth === 0) {
-      if (cur.length > 0) { out.push(cur); cur = ""; }
+      if (cur.length > 0) {
+        out.push(cur);
+        cur = "";
+      }
       continue;
     }
     cur += ch;
@@ -271,14 +315,32 @@ function splitOperands(text: string): string[] {
     const ch = trimmed[i]!;
     if (quote !== undefined) {
       cur += ch;
-      if (escaped) { escaped = false; continue; }
-      if (ch === "\\") { escaped = true; continue; }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
       if (ch === quote) quote = undefined;
       continue;
     }
-    if (ch === '"' || ch === "'") { quote = ch; cur += ch; continue; }
-    if (ch === "(") { depth += 1; cur += ch; continue; }
-    if (ch === ")") { if (depth > 0) depth -= 1; cur += ch; continue; }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      cur += ch;
+      continue;
+    }
+    if (ch === "(") {
+      depth += 1;
+      cur += ch;
+      continue;
+    }
+    if (ch === ")") {
+      if (depth > 0) depth -= 1;
+      cur += ch;
+      continue;
+    }
     if (ch === "," && depth === 0) {
       if (cur.trim().length > 0) out.push(cur.trim());
       cur = "";

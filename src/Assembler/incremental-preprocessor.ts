@@ -1,8 +1,10 @@
-import { parseLine } from "./parser.js";
+import type { SourceLine, SourceLocation } from "./types.js";
+
+import { IncrementalPreprocessorError } from "./location-errors.js";
+import type { TaggedLine } from "./preprocessor.js";
 import { evaluateExpressionDetailed } from "./expressions.js";
-import type { TaggedLine, SourceLocation } from "./preprocessor.js";
+import { parseLine } from "./parser.js";
 import { preprocessSourceToTaggedLines } from "./preprocessor.js";
-import type { SourceLine } from "./types.js";
 import { setKnownMacros } from "./parser.js";
 
 const debugLog = (msg: string) => {
@@ -15,7 +17,10 @@ interface ConditionalFrame {
   readonly type: "if";
   readonly startLineNumber: number;
   readonly startLocation: SourceLocation;
-  readonly branches: readonly { readonly condition: string; readonly isActive: boolean }[];
+  readonly branches: readonly {
+    readonly condition: string;
+    readonly isActive: boolean;
+  }[];
   currentBranchIndex: number;
   activeBranchIndex: number | null;
 }
@@ -70,7 +75,7 @@ export class IncrementalPreprocessor {
       return null;
     }
 
-    const parsed = parseLine(tagged.content, tagged.location.lineNumber);
+    const parsed = parseLine(tagged.content, tagged.location);
     return {
       ...parsed,
       location: tagged.location,
@@ -91,9 +96,11 @@ export class IncrementalPreprocessor {
         }
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : "Unknown error";
+          error instanceof Error
+            ? error.message
+            : "Unknown IncrementalPreprocessorError";
         debugLog(
-          `ERROR at ${line.location.filename}:${line.location.lineNumber}: ${message}`,
+          `IncrementalPreprocessorError at ${line.location.filename}:${line.location.lineNumber}: ${message}`,
         );
         return {
           content: line.content,
@@ -123,15 +130,23 @@ export class IncrementalPreprocessor {
       return line;
     }
 
-    const parsed = parseLine(line.content, line.location.lineNumber);
+    const parsed = parseLine(line.content, line.location);
     if (parsed.kind === "code" && parsed.mnemonic) {
       const mnemonic = parsed.mnemonic.toUpperCase();
       if (mnemonic === ".IF") {
-        this.handleIfDirective(parsed.operands[0] ?? "0", this.evaluateCondition(parsed.operands[0] ?? "0", symbols), line.location);
+        this.handleIfDirective(
+          parsed.operands[0] ?? "0",
+          this.evaluateCondition(parsed.operands[0] ?? "0", symbols),
+          line.location,
+        );
         return null;
       }
       if (mnemonic === ".ELSEIF") {
-        this.handleElseifDirective(parsed.operands[0] ?? "0", symbols, line.location);
+        this.handleElseifDirective(
+          parsed.operands[0] ?? "0",
+          symbols,
+          line.location,
+        );
         return null;
       }
       if (mnemonic === ".ELSE") {
@@ -171,26 +186,46 @@ export class IncrementalPreprocessor {
     return line;
   }
 
-  private handleMacroDefinition(line: SourceLine, location: SourceLocation): void {
+  private handleMacroDefinition(
+    line: SourceLine,
+    location: SourceLocation,
+  ): void {
     const name = line.operands[0]?.toUpperCase();
     if (!name) {
-      throw new Error(`Macro definition missing name at ${location.filename}:${location.lineNumber}`);
+      throw new IncrementalPreprocessorError(
+        "E_MACRO_DEFINITION_NEEDS_NAME",
+        `Macro definition missing name at ${location.filename}:${location.lineNumber}`,
+        location,
+      );
     }
     const parameters = line.operands.slice(1);
     const body: TaggedLine[] = [];
     while (this.lineIndex < this.lines.length) {
       const bodyLine = this.lines[this.lineIndex]!;
       this.lineIndex += 1;
-      const bodyParsed = parseLine(bodyLine.content, bodyLine.location.lineNumber);
-      if (bodyParsed.kind === "code" && bodyParsed.mnemonic?.toUpperCase() === ".ENDMACRO") break;
+      const bodyParsed = parseLine(bodyLine.content, bodyLine.location);
+      if (
+        bodyParsed.kind === "code" &&
+        bodyParsed.mnemonic?.toUpperCase() === ".ENDMACRO"
+      )
+        break;
       body.push(bodyLine);
     }
-    this.macros.set(name, { name, parameters, body, lineNumber: location.lineNumber });
+    this.macros.set(name, {
+      name,
+      parameters,
+      body,
+      lineNumber: location.lineNumber,
+    });
     // Update the parser's known macros set so it recognizes macro names during parsing
     setKnownMacros(new Set(this.macros.keys()));
   }
 
-  private handleIfDirective(condition: string, isActive: boolean, location: SourceLocation): void {
+  private handleIfDirective(
+    condition: string,
+    isActive: boolean,
+    location: SourceLocation,
+  ): void {
     this.directiveStack.push({
       type: "if",
       startLineNumber: location.lineNumber,
@@ -201,10 +236,21 @@ export class IncrementalPreprocessor {
     });
   }
 
-  private handleElseifDirective(condition: string, symbols: ReadonlyMap<string, number>, location: SourceLocation): void {
+  private handleElseifDirective(
+    condition: string,
+    symbols: ReadonlyMap<string, number>,
+    location: SourceLocation,
+  ): void {
     const frame = this.directiveStack[this.directiveStack.length - 1];
-    if (!frame || frame.type !== "if") throw new Error(`.elseif without matching .if at ${location.filename}:${location.lineNumber}`);
-    const isActive = frame.activeBranchIndex === null && this.evaluateCondition(condition, symbols);
+    if (!frame || frame.type !== "if")
+      throw new IncrementalPreprocessorError(
+        "E_IF_UNEXPECTED_ELSEIF",
+        `.elseif without matching .if at ${location.filename}:${location.lineNumber}`,
+        location,
+      );
+    const isActive =
+      frame.activeBranchIndex === null &&
+      this.evaluateCondition(condition, symbols);
     (frame.branches as any).push({ condition, isActive });
     frame.currentBranchIndex = frame.branches.length - 1;
     if (isActive) frame.activeBranchIndex = frame.currentBranchIndex;
@@ -212,7 +258,12 @@ export class IncrementalPreprocessor {
 
   private handleElseDirective(location: SourceLocation): void {
     const frame = this.directiveStack[this.directiveStack.length - 1];
-    if (!frame || frame.type !== "if") throw new Error(`.else without matching .if at ${location.filename}:${location.lineNumber}`);
+    if (!frame || frame.type !== "if")
+      throw new IncrementalPreprocessorError(
+        "E_IF_UNEXPECTED_ELSE",
+        `.else without matching .if at ${location.filename}:${location.lineNumber}`,
+        location,
+      );
     const isActive = frame.activeBranchIndex === null;
     (frame.branches as any).push({ condition: "else", isActive });
     frame.currentBranchIndex = frame.branches.length - 1;
@@ -221,21 +272,35 @@ export class IncrementalPreprocessor {
 
   private handleEndifDirective(location: SourceLocation): void {
     const frame = this.directiveStack[this.directiveStack.length - 1];
-    if (!frame || frame.type !== "if") throw new Error(`.endif without matching .if at ${location.filename}:${location.lineNumber}`);
+    if (!frame || frame.type !== "if")
+      throw new IncrementalPreprocessorError(
+        "E_IF_UNEXPECTED_ENDIF",
+        `.endif without matching .if at ${location.filename}:${location.lineNumber}`,
+        location,
+      );
     this.directiveStack.pop();
   }
 
-  private handleRepeatDirective(line: SourceLine, symbols: ReadonlyMap<string, number>, location: SourceLocation): void {
+  private handleRepeatDirective(
+    line: SourceLine,
+    symbols: ReadonlyMap<string, number>,
+    location: SourceLocation,
+  ): void {
     const countExpr = line.operands[0] ?? "0";
     const countEval = evaluateExpressionDetailed(countExpr, symbols, 0);
     const count = countEval.value ?? 0;
-    if (count < 0) throw new Error(`.repeat count must be non-negative at ${location.filename}:${location.lineNumber}`);
+    if (count < 0)
+      throw new IncrementalPreprocessorError(
+        "E_REPEAT_NEGATIVE_COUNT",
+        `.repeat count must be non-negative at ${location.filename}:${location.lineNumber}`,
+        location,
+      );
     const body: TaggedLine[] = [];
     let nesting = 0;
     while (this.lineIndex < this.lines.length) {
       const bodyLine = this.lines[this.lineIndex]!;
       this.lineIndex += 1;
-      const bodyParsed = parseLine(bodyLine.content, bodyLine.location.lineNumber);
+      const bodyParsed = parseLine(bodyLine.content, bodyLine.location);
       if (bodyParsed.kind === "code") {
         const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
         if (bodyMnemonic === ".REPEAT") nesting += 1;
@@ -246,13 +311,26 @@ export class IncrementalPreprocessor {
       }
       body.push(bodyLine);
     }
-    this.directiveStack.push({ type: "repeat", startLineNumber: location.lineNumber, startLocation: location, count, body, currentIteration: 0, lineIndex: 0 });
+    this.directiveStack.push({
+      type: "repeat",
+      startLineNumber: location.lineNumber,
+      startLocation: location,
+      count,
+      body,
+      currentIteration: 0,
+      lineIndex: 0,
+    });
     this.lines.splice(this.lineIndex, 0, ...body);
   }
 
   private handleEndrepeatDirective(location: SourceLocation): void {
     const frame = this.directiveStack[this.directiveStack.length - 1];
-    if (!frame || frame.type !== "repeat") throw new Error(`.endrepeat without matching .repeat at ${location.filename}:${location.lineNumber}`);
+    if (!frame || frame.type !== "repeat")
+      throw new IncrementalPreprocessorError(
+        "E_REPEAT_UNEXPECTED_ENDREPEAT",
+        `.endrepeat without matching .repeat at ${location.filename}:${location.lineNumber}`,
+        location,
+      );
     if (frame.currentIteration < frame.count - 1) {
       frame.currentIteration += 1;
       this.lines.splice(this.lineIndex, 0, ...frame.body);
@@ -261,7 +339,11 @@ export class IncrementalPreprocessor {
     }
   }
 
-  private expandMacro(line: SourceLine, taggedLine: TaggedLine, symbols: ReadonlyMap<string, number>): TaggedLine[] | null {
+  private expandMacro(
+    line: SourceLine,
+    taggedLine: TaggedLine,
+    symbols: ReadonlyMap<string, number>,
+  ): TaggedLine[] | null {
     if (line.kind !== "code" || !line.mnemonic) return null;
     const macro = this.macros.get(line.mnemonic.toUpperCase());
     if (!macro) return null;
@@ -272,7 +354,8 @@ export class IncrementalPreprocessor {
     });
     const expanded: TaggedLine[] = macro.body.map((bodyLine) => {
       let content = bodyLine.content;
-      for (const [param, value] of substitutions.entries()) content = content.replaceAll(`\\${param}`, value);
+      for (const [param, value] of substitutions.entries())
+        content = content.replaceAll(`\\${param}`, value);
       return {
         content,
         location: {
@@ -283,7 +366,10 @@ export class IncrementalPreprocessor {
     });
     if (line.label && expanded.length > 0) {
       const firstLine = expanded[0]!;
-      expanded[0] = { ...firstLine, content: `${line.label} ${firstLine.content}` };
+      expanded[0] = {
+        ...firstLine,
+        content: `${line.label} ${firstLine.content}`,
+      };
     }
     return expanded;
   }
@@ -297,7 +383,10 @@ export class IncrementalPreprocessor {
     return false;
   }
 
-  private evaluateCondition(expr: string, symbols: ReadonlyMap<string, number>): boolean {
+  private evaluateCondition(
+    expr: string,
+    symbols: ReadonlyMap<string, number>,
+  ): boolean {
     const result = evaluateExpressionDetailed(expr, symbols, 0);
     return result.value !== null && result.value !== 0;
   }
