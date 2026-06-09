@@ -11,7 +11,11 @@ import {
   type AddressingMode,
 } from "./opcodes.js";
 import { preprocessSource } from "./preprocessor.js";
-import { AssemblerError, PreprocessError } from "./location-errors.js";
+import {
+  AssemblerError,
+  ErrorWithLocation,
+  PreprocessError,
+} from "./location-errors.js";
 import type {
   AssemblyDiagnostic,
   AssemblyResult,
@@ -72,7 +76,7 @@ export function assemble(
     });
   } catch (error) {
     const filename = options.sourcePath ?? "<source>";
-    if (error instanceof PreprocessError) {
+    if (error instanceof ErrorWithLocation) {
       diagnostics.push({
         code: error.code,
         level: "error",
@@ -1225,13 +1229,11 @@ function makeDiagnostic(
   message: string,
   column?: number,
 ): AssemblyDiagnostic {
-  const filename = line.location.filename;
-  const lineNumber = line.location.lineNumber;
   return {
     code,
     level: "error",
     message,
-    location: { filename, lineNumber, text: line.raw },
+    location: { ...line.location, text: line.raw },
     ...(column !== undefined ? { column } : {}),
   };
 }

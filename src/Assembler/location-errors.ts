@@ -62,31 +62,54 @@ export type ErrorKind =
 export class ErrorWithLocation extends Error {
   readonly code: ErrorKind;
   readonly location: SourceLocation;
+  readonly column: number | undefined;
 
-  constructor(code: ErrorKind, message: string, location: SourceLocation) {
-    super(message);
+  constructor(
+    name: string,
+    code: ErrorKind,
+    message: string,
+    location: SourceLocation,
+    column?: number,
+  ) {
+    super(
+      `${name} at ${location.filename}:${location.lineNumber}${column !== undefined ? `:${column}` : ""}: ${message}`,
+    );
+    this.name = name;
     this.code = code;
     this.location = location;
+    this.column = column;
   }
 }
 
 export class PreprocessError extends ErrorWithLocation {
-  constructor(code: ErrorKind, message: string, location: SourceLocation) {
-    super(code, message, location);
-    this.name = "PreprocessError";
+  constructor(
+    code: ErrorKind,
+    message: string,
+    location: SourceLocation,
+    column?: number,
+  ) {
+    super("PreprocessError", code, message, location, column);
   }
 }
 
 export class IncrementalPreprocessorError extends ErrorWithLocation {
-  constructor(code: ErrorKind, message: string, location: SourceLocation) {
-    super(code, message, location);
-    this.name = "IncrementalPreprocessorError";
+  constructor(
+    code: ErrorKind,
+    message: string,
+    location: SourceLocation,
+    column?: number,
+  ) {
+    super("IncrementalPreprocessorError", code, message, location, column);
   }
 }
 
 export class AssemblerError extends ErrorWithLocation {
-  constructor(code: ErrorKind, message: string, location: SourceLocation) {
-    super(code, message, location);
-    this.name = "AssemblerError";
+  constructor(
+    code: ErrorKind,
+    message: string,
+    location: SourceLocation,
+    column?: number,
+  ) {
+    super("AssemblerError", code, message, location, column);
   }
 }

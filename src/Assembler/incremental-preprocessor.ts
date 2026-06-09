@@ -194,7 +194,7 @@ export class IncrementalPreprocessor {
     if (!name) {
       throw new IncrementalPreprocessorError(
         "E_MACRO_DEFINITION_NEEDS_NAME",
-        `Macro definition missing name at ${location.filename}:${location.lineNumber}`,
+        `Macro definition missing name`,
         location,
       );
     }
@@ -245,7 +245,7 @@ export class IncrementalPreprocessor {
     if (!frame || frame.type !== "if")
       throw new IncrementalPreprocessorError(
         "E_IF_UNEXPECTED_ELSEIF",
-        `.elseif without matching .if at ${location.filename}:${location.lineNumber}`,
+        `.elseif without matching .if`,
         location,
       );
     const isActive =
@@ -261,7 +261,7 @@ export class IncrementalPreprocessor {
     if (!frame || frame.type !== "if")
       throw new IncrementalPreprocessorError(
         "E_IF_UNEXPECTED_ELSE",
-        `.else without matching .if at ${location.filename}:${location.lineNumber}`,
+        `.else without matching .if`,
         location,
       );
     const isActive = frame.activeBranchIndex === null;
@@ -275,7 +275,7 @@ export class IncrementalPreprocessor {
     if (!frame || frame.type !== "if")
       throw new IncrementalPreprocessorError(
         "E_IF_UNEXPECTED_ENDIF",
-        `.endif without matching .if at ${location.filename}:${location.lineNumber}`,
+        `.endif without matching .if`,
         location,
       );
     this.directiveStack.pop();
@@ -292,7 +292,7 @@ export class IncrementalPreprocessor {
     if (count < 0)
       throw new IncrementalPreprocessorError(
         "E_REPEAT_NEGATIVE_COUNT",
-        `.repeat count must be non-negative at ${location.filename}:${location.lineNumber}`,
+        `.repeat count must be non-negative`,
         location,
       );
     const body: TaggedLine[] = [];
@@ -328,7 +328,7 @@ export class IncrementalPreprocessor {
     if (!frame || frame.type !== "repeat")
       throw new IncrementalPreprocessorError(
         "E_REPEAT_UNEXPECTED_ENDREPEAT",
-        `.endrepeat without matching .repeat at ${location.filename}:${location.lineNumber}`,
+        `.endrepeat without matching .repeat`,
         location,
       );
     if (frame.currentIteration < frame.count - 1) {

@@ -5,7 +5,6 @@ export interface SourceLocation {
   readonly filename: string;
   readonly lineNumber: number;
   readonly text?: string;
-  readonly parent?: SourceLocation;
 }
 
 /**
@@ -14,7 +13,6 @@ export interface SourceLocation {
 export interface TaggedLine {
   readonly content: string;
   readonly location: SourceLocation;
-  readonly locationChain: readonly SourceLocation[];
 }
 
 /**
@@ -28,7 +26,6 @@ export interface SourceLine {
   readonly mnemonic?: string;
   readonly comment?: string;
   readonly location: SourceLocation;
-  readonly locationChain: readonly SourceLocation[];
 }
 
 /**
@@ -39,7 +36,6 @@ export interface AssemblyDiagnostic {
   readonly level: "error" | "warning" | "info";
   readonly message: string;
   readonly location: SourceLocation;
-  readonly hint?: string;
   readonly column?: number;
 }
 
@@ -51,7 +47,6 @@ export interface MacroDefinition {
   readonly parameters: readonly string[];
   readonly body: readonly TaggedLine[];
   readonly location: SourceLocation;
-  readonly locationChain: readonly SourceLocation[];
 }
 
 /**

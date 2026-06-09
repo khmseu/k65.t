@@ -24,9 +24,9 @@ function looksLikeLabel(token: string): boolean {
 }
 
 export function parseSource(text: string, filename: string): SourceLine[] {
-  return text
-    .split(/\r?\n/)
-    .map((raw, index) => parseLine(raw, { filename, lineNumber: index + 1 }));
+  return text.split(/\r?\n/).map((raw, index) => {
+    return parseLine(raw, { filename, lineNumber: index + 1 });
+  });
 }
 
 /**
@@ -50,21 +50,21 @@ export function parseSource(text: string, filename: string): SourceLine[] {
 export function parseLine(raw: string, location: SourceLocation): SourceLine {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
-    return { location, raw, kind: "blank", operands: [], locationChain: [] };
+    return { location, raw, kind: "blank", operands: [] };
   }
   if (commentOnlyPattern.test(raw)) {
-    return { location, raw, kind: "comment", operands: [], locationChain: [] };
+    return { location, raw, kind: "comment", operands: [] };
   }
 
   const [codePart, commentPart] = splitComment(raw);
   const text = codePart.trim();
   if (text.length === 0) {
-    return { location, raw, kind: "comment", operands: [], locationChain: [] };
+    return { location, raw, kind: "comment", operands: [] };
   }
 
   let parts = splitTopLevelWhitespace(text);
   if (parts.length === 0) {
-    return { location, raw, kind: "comment", operands: [], locationChain: [] };
+    return { location, raw, kind: "comment", operands: [] };
   }
 
   // Normalize compact assignment forms: "a=b" -> ["a", "=", "b"]
@@ -107,7 +107,6 @@ export function parseLine(raw: string, location: SourceLocation): SourceLine {
         kind: "code",
         label,
         operands: [],
-        locationChain: [],
         ...(commentPart !== undefined ? { comment: commentPart } : {}),
       };
     }
@@ -182,7 +181,6 @@ export function parseLine(raw: string, location: SourceLocation): SourceLine {
     raw,
     kind: "code",
     operands,
-    locationChain: [],
     ...(label !== undefined ? { label } : {}),
     ...(mnemonic !== undefined ? { mnemonic } : {}),
     ...(commentPart !== undefined ? { comment: commentPart } : {}),
