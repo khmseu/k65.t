@@ -1,4 +1,3 @@
-```markdown
 # File Loading & Preprocessing Architecture Refactoring
 
 ## Current Architecture Problem
@@ -11,7 +10,7 @@ The assembler has **duplicate preprocessing logic** across three files:
 
 ### Current Data Flow
 
-~~~
+```text
 CLI (index.ts)
   ↓ readFileSync(inputPath)
   ↓ sourceText: string
@@ -24,9 +23,10 @@ IncrementalPreprocessor(sourceText)
   ↓ processes with symbol table (handles .MACRO, .REPEAT, .IF)
   ↓
 SourceLine[] (to assembler passes)
-~~~
+```
 
 **Problems:**
+
 1. `.INCLUDE` handled in preprocessor.ts, not available to symbol table
 2. `.MACRO` collection happens twice (preprocessor.ts → setKnownMacros, then incremental-preprocessor.ts)
 3. `.REPEAT` expansion happens in preprocessor.ts, then re-processed in incremental-preprocessor.ts
@@ -40,13 +40,14 @@ SourceLine[] (to assembler passes)
 ### Design Principle
 
 **Separate concerns:**
+
 1. **File I/O** → `loadAndPreprocessFile(filename)`
 2. **String → TaggedLine conversion** → `preprocessor.ts` (minimal)
 3. **All structural preprocessing** → `IncrementalPreprocessor` (with symbol table access)
 
 ### New Data Flow
 
-~~~
+```text
 CLI (index.ts)
   ↓
 loadAndPreprocessFile(inputPath, options)
@@ -65,7 +66,7 @@ IncrementalPreprocessor(taggedLines)
   └─ returns SourceLine[] (one at a time via nextLine())
   ↓
 Assembler passes (sizing, diagnostics, emission)
-~~~
+```
 
 ### Key Changes
 
@@ -80,12 +81,12 @@ export interface FileLoadOptions {
 
 /**
  * Load a source file and prepare it for assembly.
- * 
+ *
  * Responsibility:
  * - Read the file from disk
  * - Convert to TaggedLine[] (preserving source locations)
  * - Return structured data ready for IncrementalPreprocessor
- * 
+ *
  * Does NOT handle:
  * - .INCLUDE (moved to IncrementalPreprocessor)
  * - .MACRO collection (moved to IncrementalPreprocessor)
@@ -94,11 +95,11 @@ export interface FileLoadOptions {
  */
 export function loadAndPreprocessFile(
   filePath: string,
-  options: FileLoadOptions = {}
+  options: FileLoadOptions = {},
 ): TaggedLine[] {
-  const readFile = options.readFile ?? ((path) => readFileSync(path, 'utf8'));
+  const readFile = options.readFile ?? ((path) => readFileSync(path, "utf8"));
   const sourceText = readFile(filePath);
-  
+
   return preprocessSourceToTaggedLines(sourceText, {
     sourcePath: filePath,
     currentDir: dirname(filePath),
@@ -112,11 +113,13 @@ export function loadAndPreprocessFile(
 **Location:** `preprocessor.ts`
 
 **Current responsibility (KEEP):**
+
 - Split source string by newlines
 - Attach SourceLocation to each line
 - Return `TaggedLine[]`
 
 **Current responsibility (REMOVE):**
+
 - ~~`.INCLUDE` handling~~ → Move to IncrementalPreprocessor
 - ~~`.MACRO` collection~~ → Move to IncrementalPreprocessor
 - ~~`.REPEAT` expansion~~ → Move to IncrementalPreprocessor
@@ -125,22 +128,22 @@ export function loadAndPreprocessFile(
 ```typescript
 /**
  * Convert source string to TaggedLine array.
- * 
+ *
  * ONLY responsibility:
  * - Split by newlines
  * - Attach SourceLocation to each line
  * - Return TaggedLine[]
- * 
+ *
  * All preprocessing directives (.INCLUDE, .MACRO, .REPEAT, .IF)
  * are handled by IncrementalPreprocessor with symbol table access.
  */
 export function preprocessSourceToTaggedLines(
   text: string,
-  options: PreprocessOptions = {}
+  options: PreprocessOptions = {},
 ): TaggedLine[] {
-  const sourcePath = options.sourcePath ?? '<source>';
+  const sourcePath = options.sourcePath ?? "<source>";
   const lines = text.split(/\r?\n/);
-  
+
   return lines.map((content, idx) => ({
     content,
     location: {
@@ -156,12 +159,14 @@ export function preprocessSourceToTaggedLines(
 **Location:** `incremental-preprocessor.ts`
 
 **Add to existing responsibilities:**
+
 - Handle `.INCLUDE` directives (recursive file loading)
   - Use `readFile` option to load included files
   - Convert to TaggedLine[] and splice into lines array
   - Track include stack to prevent circular includes
 
 **Keep existing responsibilities:**
+
 - Collect `.MACRO` definitions
 - Expand macro invocations
 - Handle `.REPEAT` blocks
@@ -176,13 +181,12 @@ export interface PreprocessorOptions {
 export class IncrementalPreprocessor {
   constructor(
     taggedLines: readonly TaggedLine[],
-    options: PreprocessorOptions = {}
+    options: PreprocessorOptions = {},
   ) {
     this.originalLines = [...taggedLines];
     this.lines = [...taggedLines];
-    this.readFile = options.readFile ?? 
-      ((path) => readFileSync(path, 'utf8'));
-    this.currentDir = options.sourcePath 
+    this.readFile = options.readFile ?? ((path) => readFileSync(path, "utf8"));
+    this.currentDir = options.sourcePath
       ? dirname(options.sourcePath)
       : process.cwd();
   }
@@ -190,14 +194,14 @@ export class IncrementalPreprocessor {
   // NEW: Handle .INCLUDE directive
   private handleIncludeDirective(
     operand: string,
-    location: SourceLocation
+    location: SourceLocation,
   ): void {
     const includePath = parseIncludePath(operand);
     if (!includePath) {
       throw new IncrementalPreprocessorError(
-        'E_INCLUDE_PATH',
+        "E_INCLUDE_PATH",
         `.include path must be quoted: ${operand}`,
-        location
+        location,
       );
     }
 
@@ -207,9 +211,9 @@ export class IncrementalPreprocessor {
 
     if (this.includeStack.includes(resolvedPath)) {
       throw new IncrementalPreprocessorError(
-        'E_INCLUDE_CYCLE',
+        "E_INCLUDE_CYCLE",
         `Circular include: ${resolvedPath}`,
-        location
+        location,
       );
     }
 
@@ -218,21 +222,19 @@ export class IncrementalPreprocessor {
       includedText = this.readFile(resolvedPath);
     } catch {
       throw new IncrementalPreprocessorError(
-        'E_INCLUDE_READ',
+        "E_INCLUDE_READ",
         `Cannot read include file: ${resolvedPath}`,
-        location
+        location,
       );
     }
 
-    const includedLines = includedText
-      .split(/\r?\n/)
-      .map((content, idx) => ({
-        content,
-        location: {
-          filename: resolvedPath,
-          lineNumber: idx + 1,
-        },
-      }));
+    const includedLines = includedText.split(/\r?\n/).map((content, idx) => ({
+      content,
+      location: {
+        filename: resolvedPath,
+        lineNumber: idx + 1,
+      },
+    }));
 
     this.lines.splice(this.lineIndex, 0, ...includedLines);
   }
@@ -244,6 +246,7 @@ export class IncrementalPreprocessor {
 **Location:** `assembler.ts`
 
 **Before:**
+
 ```typescript
 export interface AssembleOptions {
   readonly sourcePath?: string;
@@ -252,13 +255,14 @@ export interface AssembleOptions {
 
 export function assemble(
   sourceText: string,
-  options: AssembleOptions = {}
+  options: AssembleOptions = {},
 ): AssemblyResult {
   // ...
 }
 ```
 
 **After:**
+
 ```typescript
 export interface AssembleOptions {
   readonly sourcePath?: string;
@@ -267,7 +271,7 @@ export interface AssembleOptions {
 
 export function assemble(
   taggedLines: readonly TaggedLine[],
-  options: AssembleOptions = {}
+  options: AssembleOptions = {},
 ): AssemblyResult {
   // ... passes taggedLines to IncrementalPreprocessor
   const preprocessor = new IncrementalPreprocessor(taggedLines, {
@@ -283,20 +287,22 @@ export function assemble(
 **Location:** `cli.ts` / `index.ts`
 
 **Before:**
+
 ```typescript
-const sourceText = readFileSync(cliOptions.inputPath, 'utf8');
+const sourceText = readFileSync(cliOptions.inputPath, "utf8");
 const result = assemble(sourceText, {
   sourcePath: cliOptions.inputPath,
-  readFile: (path) => readFileSync(path, 'utf8'),
+  readFile: (path) => readFileSync(path, "utf8"),
 });
 ```
 
 **After:**
+
 ```typescript
 const taggedLines = loadAndPreprocessFile(cliOptions.inputPath);
 const result = assemble(taggedLines, {
   sourcePath: cliOptions.inputPath,
-  readFile: (path) => readFileSync(path, 'utf8'),
+  readFile: (path) => readFileSync(path, "utf8"),
 });
 ```
 
@@ -305,33 +311,39 @@ const result = assemble(taggedLines, {
 ## Migration Strategy
 
 ### Phase 1: Prepare IncrementalPreprocessor (Day 1)
+
 - Add `.INCLUDE` handling to IncrementalPreprocessor
 - Add `readFile` and `currentDir` properties
 - Test with existing test suite
 
 ### Phase 2: Update assemble() signature (Day 1)
+
 - Change `assemble(sourceText, options)` → `assemble(taggedLines, options)`
 - Update IncrementalPreprocessor instantiation
 - Maintain backward compatibility with wrapper if needed
 
 ### Phase 3: Create loadAndPreprocessFile() (Day 2)
+
 - Implement new function in preprocessor.ts
 - Export from index.ts
 - Update CLI to use it
 
 ### Phase 4: Simplify preprocessSourceToTaggedLines() (Day 2)
+
 - Remove `.INCLUDE` handling
 - Remove `.MACRO` collection
 - Remove `.REPEAT` expansion
 - Keep only string → TaggedLine conversion
 
 ### Phase 5: Update tests (Day 3)
+
 - Update existing tests to use new signatures
 - Add tests for loadAndPreprocessFile()
 - Add tests for .INCLUDE in IncrementalPreprocessor
 - Verify all existing tests still pass
 
 ### Phase 6: Cleanup (Day 3-4)
+
 - Remove source-loader.ts (incomplete/broken)
 - Remove old preprocessor string-based logic
 - Update documentation
@@ -342,23 +354,27 @@ const result = assemble(taggedLines, {
 ## Benefits
 
 ### Architectural
+
 - **Single responsibility**: Each function does one thing
 - **No duplication**: Preprocessing logic in one place (IncrementalPreprocessor)
 - **Symbol table aware**: .INCLUDE can use current symbols if needed
 - **Cleaner separation**: File I/O vs. preprocessing vs. assembly
 
 ### Code Quality
+
 - **Fewer bugs**: Less duplicated code = fewer places to fix bugs
 - **Easier to test**: Each component independently testable
 - **Better maintainability**: Changes to preprocessing logic in one place
 - **Consistent behavior**: All directives use same evaluation context
 
 ### Performance
+
 - **No re-splitting**: Source string split once, not on every pass
 - **No re-parsing**: Directives parsed once by IncrementalPreprocessor
 - **Potential for optimization**: Could cache included files
 
 ### User Experience
+
 - **Better error messages**: Source locations preserved throughout
 - **Clearer diagnostics**: Errors point to actual source files
 - **Include-aware symbols**: Macros/symbols from includes visible in dependent code
@@ -367,26 +383,28 @@ const result = assemble(taggedLines, {
 
 ## Files Changed
 
-| File | Changes | Impact |
-|------|---------|--------|
-| `preprocessor.ts` | Add `loadAndPreprocessFile()`, simplify `preprocessSourceToTaggedLines()` | Medium |
-| `incremental-preprocessor.ts` | Add `.INCLUDE` handling | Medium |
-| `assembler.ts` | Change `assemble(sourceText)` → `assemble(taggedLines)` | Medium |
-| `cli.ts` / `index.ts` | Use `loadAndPreprocessFile()` | Low |
-| `types.ts` | Add `FileLoadOptions` interface | Low |
-| `source-loader.ts` | Delete (broken, incomplete) | Low |
-| Tests | Update to new signatures | Medium |
+| File                          | Changes                                                                   | Impact |
+| ----------------------------- | ------------------------------------------------------------------------- | ------ |
+| `preprocessor.ts`             | Add `loadAndPreprocessFile()`, simplify `preprocessSourceToTaggedLines()` | Medium |
+| `incremental-preprocessor.ts` | Add `.INCLUDE` handling                                                   | Medium |
+| `assembler.ts`                | Change `assemble(sourceText)` → `assemble(taggedLines)`                   | Medium |
+| `cli.ts` / `index.ts`         | Use `loadAndPreprocessFile()`                                             | Low    |
+| `types.ts`                    | Add `FileLoadOptions` interface                                           | Low    |
+| `source-loader.ts`            | Delete (broken, incomplete)                                               | Low    |
+| Tests                         | Update to new signatures                                                  | Medium |
 
 ---
 
 ## Testing Strategy
 
 ### Existing Tests (Must Pass)
+
 - All `assembler.test.ts` tests
 - All `cli.test.ts` tests
 - All `incremental-preprocessor.ts` tests (if any)
 
 ### New Tests Needed
+
 1. **loadAndPreprocessFile()**
    - Load simple file
    - Load file with includes
@@ -408,6 +426,7 @@ const result = assemble(taggedLines, {
    - Includes with .IF
 
 ### Regression Tests
+
 - All existing functionality must work unchanged
 - Symbol table behavior unchanged
 - Error reporting unchanged or improved
@@ -428,5 +447,7 @@ const result = assemble(taggedLines, {
 
 4. **Should we deprecate assemble(sourceText) or remove it immediately?**
    - Recommendation: Remove immediately (clean break, tests will catch issues)
-```
 
+## Answers
+
+Mostly, your recommendations are fine. But if we move the include handling to the incremental preprocessor (which is good), we should also move reading the main file into the incremental preprocessor. That ought to simplify things.

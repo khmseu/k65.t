@@ -1,9 +1,8 @@
-```markdown
 # Preprocessing Refactoring - Visual Guide
 
 ## Current Architecture (Problem)
 
-~~~
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                          CLI (index.ts)                         │
 │                                                                 │
@@ -54,13 +53,13 @@ PROBLEMS:
   ❌ Source locations lost when preprocessSource returns string
   ❌ Re-processing on every pass
   ❌ Unclear responsibility boundaries
-~~~
+```
 
 ---
 
 ## Proposed Architecture (Solution)
 
-~~~
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                          CLI (index.ts)                         │
 │                                                                 │
@@ -116,7 +115,7 @@ BENEFITS:
   ✅ Source locations preserved throughout
   ✅ Single pass through directives
   ✅ Clear responsibility boundaries
-~~~
+```
 
 ---
 
@@ -124,7 +123,7 @@ BENEFITS:
 
 ### Current (Problem)
 
-~~~
+```text
 inputPath
    ↓
 readFileSync
@@ -150,11 +149,11 @@ IncrementalPreprocessor()
 SourceLine[]
    ↓
 Assembler passes
-~~~
+```
 
 ### Proposed (Solution)
 
-~~~
+```text
 inputPath
    ↓
 loadAndPreprocessFile()
@@ -183,7 +182,7 @@ IncrementalPreprocessor()
 SourceLine[]
    ↓
 Assembler passes
-~~~
+```
 
 ---
 
@@ -191,7 +190,7 @@ Assembler passes
 
 ### Current (Overlapping)
 
-~~~
+```text
                     preprocessor.ts    incremental-preprocessor.ts
 ─────────────────────────────────────────────────────────────────
 .INCLUDE              ✓                 ✗
@@ -201,11 +200,11 @@ Assembler passes
 .IF pass-through      ✓                 ✓ (DUPLICATE!)
 .IF evaluation        ✗                 ✓
 String → TaggedLine   ✓                 ✗
-~~~
+```
 
 ### Proposed (Clear Separation)
 
-~~~
+```text
                     preprocessor.ts    incremental-preprocessor.ts
 ─────────────────────────────────────────────────────────────────
 .INCLUDE              ✗                 ✓ (NEW!)
@@ -215,7 +214,7 @@ String → TaggedLine   ✓                 ✗
 .IF pass-through      ✗                 ✓
 .IF evaluation        ✗                 ✓
 String → TaggedLine   ✓                 ✗
-~~~
+```
 
 ---
 
@@ -223,7 +222,7 @@ String → TaggedLine   ✓                 ✗
 
 ### New Functions
 
-~~~typescript
+```typescript
 // Load file and prepare for assembly
 loadAndPreprocessFile(
   filePath: string,
@@ -235,11 +234,11 @@ preprocessSourceToTaggedLines(
   text: string,
   options: PreprocessOptions = {}
 ): TaggedLine[]
-~~~
+```
 
 ### Modified Functions
 
-~~~typescript
+```typescript
 // Before:
 assemble(sourceText: string, options): AssemblyResult
 
@@ -251,13 +250,13 @@ constructor(source: string, options)
 
 // After:
 constructor(taggedLines: readonly TaggedLine[], options)
-~~~
+```
 
 ---
 
 ## Implementation Phases
 
-~~~
+```text
 Phase 1: IncrementalPreprocessor
 ├─ Add .INCLUDE handling
 ├─ Add readFile property
@@ -297,7 +296,7 @@ Phase 8: Cleanup
 ├─ Delete source-loader.ts
 ├─ Remove deprecated code
 └─ Final verification
-~~~
+```
 
 ---
 
@@ -305,7 +304,7 @@ Phase 8: Cleanup
 
 ### Code Changes
 
-~~~
+```text
 Files modified:        7
 Files deleted:         1
 New functions:         1
@@ -313,32 +312,32 @@ Modified functions:    3
 Lines added:          ~150
 Lines removed:        ~450
 Net change:           -300 lines
-~~~
+```
 
 ### Complexity Reduction
 
-~~~
+```text
 Preprocessing locations:
   Before: 3 (preprocessor.ts, incremental-preprocessor.ts, source-loader.ts)
   After:  1 (incremental-preprocessor.ts)
-  
+
 Duplicate logic:
   Before: .MACRO, .REPEAT, .IF in 2+ places
   After:  All in one place
-  
+
 Function responsibilities:
   Before: Overlapping, unclear
   After:  Clear, non-overlapping
-~~~
+```
 
 ### Quality Improvements
 
-~~~
+```text
 Code duplication:    -100% (for .MACRO, .REPEAT, .IF)
 Test coverage:       +15% (new include tests)
 Maintainability:     +40% (clearer structure)
 Bug surface area:    -30% (less duplicate code)
-~~~
+```
 
 ---
 
@@ -347,66 +346,70 @@ Bug surface area:    -30% (less duplicate code)
 ### Loading and Assembling a File
 
 #### Before
-~~~typescript
-import { assemble } from './assembler.js';
-import { readFileSync } from 'fs';
 
-const sourceText = readFileSync('program.asm', 'utf8');
+```typescript
+import { assemble } from "./assembler.js";
+import { readFileSync } from "fs";
+
+const sourceText = readFileSync("program.asm", "utf8");
 const result = assemble(sourceText, {
-  sourcePath: 'program.asm',
-  readFile: (path) => readFileSync(path, 'utf8'),
+  sourcePath: "program.asm",
+  readFile: (path) => readFileSync(path, "utf8"),
 });
-~~~
+```
 
 #### After
-~~~typescript
-import { assemble, loadAndPreprocessFile } from './assembler.js';
 
-const taggedLines = loadAndPreprocessFile('program.asm');
+```typescript
+import { assemble, loadAndPreprocessFile } from "./assembler.js";
+
+const taggedLines = loadAndPreprocessFile("program.asm");
 const result = assemble(taggedLines, {
-  sourcePath: 'program.asm',
-  readFile: (path) => readFileSync(path, 'utf8'),
+  sourcePath: "program.asm",
+  readFile: (path) => readFileSync(path, "utf8"),
 });
-~~~
+```
 
 ### Testing
 
-#### Before
-~~~typescript
-test('assembles with includes', () => {
+#### Before [Testing]
+
+```typescript
+test("assembles with includes", () => {
   const sourceText = `
     .include "macros.asm"
     LDA #$42
   `;
   const result = assemble(sourceText, {
     readFile: (path) => {
-      if (path === 'macros.asm') return 'MYMACRO .macro\n...';
-      throw new Error('File not found');
+      if (path === "macros.asm") return "MYMACRO .macro\n...";
+      throw new Error("File not found");
     },
   });
   expect(result.binary).toBeDefined();
 });
-~~~
+```
 
-#### After
-~~~typescript
-test('assembles with includes', () => {
-  const taggedLines = loadAndPreprocessFile('program.asm', {
+#### After [Testing]
+
+```typescript
+test("assembles with includes", () => {
+  const taggedLines = loadAndPreprocessFile("program.asm", {
     readFile: (path) => {
-      if (path === 'macros.asm') return 'MYMACRO .macro\n...';
-      throw new Error('File not found');
+      if (path === "macros.asm") return "MYMACRO .macro\n...";
+      throw new Error("File not found");
     },
   });
   const result = assemble(taggedLines);
   expect(result.binary).toBeDefined();
 });
-~~~
+```
 
 ---
 
 ## Timeline
 
-~~~
+```text
 Day 1 (4-5 hours)
 ├─ Phase 1: IncrementalPreprocessor (.INCLUDE)
 └─ Phase 2: assemble() signature
@@ -420,7 +423,7 @@ Day 2 (3-4 hours)
 Day 3 (2-3 hours)
 ├─ Phase 7: Update tests
 └─ Phase 8: Cleanup & verification
-~~~
+```
 
 ---
 
@@ -434,6 +437,3 @@ Day 3 (2-3 hours)
 - ✅ Code is simpler/cleaner
 - ✅ No circular dependencies
 - ✅ Ready to merge
-
-```
-
