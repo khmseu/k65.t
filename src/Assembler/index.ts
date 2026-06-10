@@ -1,5 +1,5 @@
 import { parseCliArgs, resolveOutputPaths } from "./cli.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 
 import { assemble } from "./assembler.js";
 import { error } from "node:console";
@@ -9,8 +9,7 @@ async function main(): Promise<void> {
   const cli = parseCliArgs(process.argv.slice(2));
   const inputPath = cli.inputPath;
 
-  const source = await readFile(inputPath, "utf8");
-  const result = assemble(source, { sourcePath: inputPath });
+  const result = assemble(inputPath, { sourcePath: inputPath });
 
   if (result.diagnostics.length > 0) {
     for (const diagnostic of result.diagnostics) {
