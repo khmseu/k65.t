@@ -6,9 +6,9 @@ import test from "node:test";
 function makeReadFile(files: Record<string, string>): (path: string) => string {
   return (path: string) => {
     // Try exact match first, then basename match
-    if (path in files) return files[path];
+    if (path in files) return files[path]!;
     const basename = path.split(/[/\\]/).pop()!;
-    if (basename in files) return files[basename];
+    if (basename in files) return files[basename]!;
     throw new Error(`File not found: ${path}`);
   };
 }
@@ -233,10 +233,7 @@ test("assemble handles .include with absolute and relative paths", () => {
     "tail .byte $FF",
   ].join("\n");
 
-  const subSource = [
-    "start .byte $11",
-    "      .byte $22",
-  ].join("\n");
+  const subSource = ["start .byte $11", "      .byte $22"].join("\n");
 
   const result = assemble("test.asm", {
     sourcePath: "test.asm",

@@ -10,10 +10,7 @@ import {
   opcodes,
   type AddressingMode,
 } from "./opcodes.js";
-import {
-  AssemblerError,
-  ErrorWithLocation,
-} from "./location-errors.js";
+import { AssemblerError, ErrorWithLocation } from "./location-errors.js";
 import type {
   AssemblyDiagnostic,
   AssemblyResult,
@@ -59,14 +56,14 @@ export interface AssembleOptions {
 }
 
 export function assemble(
-  sourceText: string,
+  inputPath: string,
   options: AssembleOptions = {},
 ): AssemblyResult {
   const diagnostics: AssemblyDiagnostic[] = [];
 
   let sized: PassState;
   try {
-    sized = runSizingPasses(sourceText, options);
+    sized = runSizingPasses(inputPath, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     diagnostics.push({
@@ -85,7 +82,7 @@ export function assemble(
     };
   }
   try {
-    diagnostics.push(...collectDiagnostics(sourceText, sized, options));
+    diagnostics.push(...collectDiagnostics(inputPath, sized, options));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     diagnostics.push({
@@ -102,7 +99,7 @@ export function assemble(
     pageSize: number;
   };
   try {
-    emitted = emitBinary(sourceText, sized, options);
+    emitted = emitBinary(inputPath, sized, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     diagnostics.push({
@@ -134,7 +131,7 @@ export function assemble(
 }
 
 function runSizingPasses(
-  sourceText: string,
+  inputPath: string,
   options: AssembleOptions,
 ): PassState {
   let symbols = new Map<string, number>();
@@ -155,7 +152,7 @@ function runSizingPasses(
     let maxAddress = Number.NEGATIVE_INFINITY;
     let currentScope: string | undefined;
 
-    const preprocessor = new IncrementalPreprocessor(sourceText, {
+    const preprocessor = new IncrementalPreprocessor(inputPath, {
       ...(options.sourcePath !== undefined
         ? { sourcePath: options.sourcePath }
         : {}),
@@ -248,13 +245,13 @@ function runSizingPasses(
 }
 
 function collectDiagnostics(
-  sourceText: string,
+  inputPath: string,
   passState: PassState,
   options: AssembleOptions,
 ): AssemblyDiagnostic[] {
   const diagnostics: AssemblyDiagnostic[] = [];
   let location = passState.startAddress;
-  const preprocessor = new IncrementalPreprocessor(sourceText, {
+  const preprocessor = new IncrementalPreprocessor(inputPath, {
     ...(options.sourcePath !== undefined
       ? { sourcePath: options.sourcePath }
       : {}),

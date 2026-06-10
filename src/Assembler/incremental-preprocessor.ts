@@ -6,6 +6,7 @@ import type {
   TaggedLine,
 } from "./types.js";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+
 import { evaluateExpressionDetailed } from "./expressions.js";
 import { parseLine } from "./parser.js";
 import { readFileSync } from "node:fs";
@@ -103,7 +104,7 @@ export class IncrementalPreprocessor {
       return null;
     }
 
-    const parsed = parseLine(tagged.content, tagged.location.lineNumber);
+    const parsed = parseLine(tagged.content, tagged.location);
     return {
       ...parsed,
       location: tagged.location,
@@ -144,7 +145,7 @@ export class IncrementalPreprocessor {
       return line;
     }
 
-    const parsed = parseLine(line.content, line.location.lineNumber);
+    const parsed = parseLine(line.content, line.location);
     if (parsed.kind === "code" && parsed.mnemonic) {
       const mnemonic = parsed.mnemonic.toUpperCase();
 
@@ -216,10 +217,7 @@ export class IncrementalPreprocessor {
     while (this.lineIndex < this.lines.length) {
       const bodyLine = this.lines[this.lineIndex]!;
       this.lineIndex += 1;
-      const bodyParsed = parseLine(
-        bodyLine.content,
-        bodyLine.location.lineNumber,
-      );
+      const bodyParsed = parseLine(bodyLine.content, bodyLine.location);
       if (
         bodyParsed.kind === "code" &&
         bodyParsed.mnemonic?.toUpperCase() === ".ENDMACRO"
@@ -240,7 +238,7 @@ export class IncrementalPreprocessor {
       name,
       parameters,
       body,
-      lineNumber: location.lineNumber,
+      location: location,
     });
   }
 
@@ -330,10 +328,7 @@ export class IncrementalPreprocessor {
     while (this.lineIndex < this.lines.length) {
       const bodyLine = this.lines[this.lineIndex]!;
       this.lineIndex += 1;
-      const bodyParsed = parseLine(
-        bodyLine.content,
-        bodyLine.location.lineNumber,
-      );
+      const bodyParsed = parseLine(bodyLine.content, bodyLine.location);
       if (bodyParsed.kind === "code") {
         const bodyMnemonic = bodyParsed.mnemonic?.toUpperCase();
         if (bodyMnemonic === ".REPEAT") {
